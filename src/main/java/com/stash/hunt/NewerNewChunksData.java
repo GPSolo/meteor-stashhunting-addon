@@ -58,7 +58,10 @@ public class NewerNewChunksData
 
         try {
             Module newerNewChunks = Modules.get().get("NewerNewChunks");
-            if (newerNewChunks == null) return;
+            if (newerNewChunks == null) {
+                System.out.println("[TrailFollower] NewerNewChunks module not found, file fallback only.");
+                return;
+            }
 
             Class<?> cls = newerNewChunks.getClass();
             fNewChunks = getAccessibleField(cls, "newChunks");
@@ -69,10 +72,14 @@ public class NewerNewChunksData
             if (fNewChunks != null && fOldChunks != null) {
                 module = newerNewChunks;
                 reflectionAvailable = true;
+                System.out.println("[TrailFollower] NewerNewChunks reflection access established.");
+            } else {
+                System.out.println("[TrailFollower] NewerNewChunks fields not found, file fallback only.");
             }
         }
         catch (Throwable t) {
             reflectionAvailable = false;
+            System.out.println("[TrailFollower] NewerNewChunks reflection failed: " + t.getMessage());
         }
     }
 
@@ -116,18 +123,21 @@ public class NewerNewChunksData
     {
         init();
 
+        // Try reflection first
         if (field != null && reflectionAvailable && module != null) {
             try {
                 Object value = field.get(module);
                 if (value instanceof Set<?> set) {
-                    return set.contains(new ChunkPos(x, z));
+                    if (set.contains(new ChunkPos(x, z))) return true;
                 }
             }
             catch (Throwable t) {
-                // fall back to the saved data files
+                // fall through to file fallback
             }
         }
 
+        // File fallback — always checked, even when reflection found the module
+        // (the reflected set may be empty if the module was disabled or just loaded)
         return fileSet(fileName, dimension).contains(ChunkPos.pack(x, z));
     }
 

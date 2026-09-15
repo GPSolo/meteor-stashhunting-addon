@@ -753,7 +753,7 @@ public class TrailFollower extends Module
         boolean isInverse = newerNewChunksData.isInverseChunk(chunkPos.x(), chunkPos.z(), currentDimension);
         boolean isOld = newerNewChunksData.isOldChunk(chunkPos.x(), chunkPos.z(), currentDimension);
 
-        boolean isHighlighted = isNew || isInverse;
+        boolean isHighlighted = isNew || isInverse || isOld;
         return isHighlighted && ((!isNew && !only112.get()) || isOld);
     }
 
