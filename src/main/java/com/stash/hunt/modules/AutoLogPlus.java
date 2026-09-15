@@ -84,10 +84,26 @@ public class AutoLogPlus extends Module
         .build()
     );
 
-    private final Setting<BlockPos> position = sgGeneral.add(new BlockPosSetting.Builder()
-        .name("position")
-        .description("The position to log out at. Y position is ignored.")
-        .defaultValue(new BlockPos(0, 0, 0))
+    private final Setting<Integer> positionX = sgGeneral.add(new IntSetting.Builder()
+        .name("position-x")
+        .description("The X coordinate to log out at. Y position is not included in the check.")
+        .defaultValue(0)
+        .visible(logPosition::get)
+        .build()
+    );
+
+    private final Setting<Integer> positionY = sgGeneral.add(new IntSetting.Builder()
+        .name("position-y")
+        .description("The Y coordinate to log out at. Y position is not included in the check.")
+        .defaultValue(0)
+        .visible(logPosition::get)
+        .build()
+    );
+
+    private final Setting<Integer> positionZ = sgGeneral.add(new IntSetting.Builder()
+        .name("position-z")
+        .description("The Z coordinate to log out at. Y position is not included in the check.")
+        .defaultValue(0)
         .visible(logPosition::get)
         .build()
     );
@@ -241,7 +257,7 @@ public class AutoLogPlus extends Module
         }
         if (logPosition.get())
         {
-            double distanceToTarget = mc.player.position().multiply(1,0,1).distanceTo(Vec3.atCenterOf(position.get()).multiply(1,0,1));
+            double distanceToTarget = mc.player.position().multiply(1,0,1).distanceTo(Vec3.atCenterOf(new BlockPos(positionX.get(), positionY.get(), positionZ.get())).multiply(1,0,1));
             if (distanceToTarget < distance.get())
             {
                 logOut("Player was within " + distanceToTarget + " blocks of the target position.", true);
