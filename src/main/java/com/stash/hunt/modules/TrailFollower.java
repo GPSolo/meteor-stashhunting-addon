@@ -258,8 +258,8 @@ public class TrailFollower extends Module
 
     public final Setting<Boolean> circleOnStuck = sgAdvanced.add(new BoolSetting.Builder()
         .name("circle-on-stuck")
-        .description("Circles in place to search for new chunks when none have been found recently. When disabled, TrailFollower keeps flying straight along the committed trail heading while looking for more chunks.")
-        .defaultValue(false)
+        .description("Circles in place to search for new chunks when none have been found recently. Keep on to keep running until the trail truly ends with no possible alternative path. When disabled, TrailFollower keeps flying straight along the committed trail heading while looking for more chunks.")
+        .defaultValue(true)
         .build()
     );
 
