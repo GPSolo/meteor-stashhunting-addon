@@ -15,6 +15,8 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.Scaffold;
+import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFly;
+import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFlightModes;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
@@ -28,6 +30,8 @@ import net.minecraft.world.entity.EquipmentSlotGroup;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,7 +39,8 @@ import java.util.List;
 public class AutoEXPPlus extends Module {
     public enum LandingMethod {
         BARITONE,
-        SCAFFOLD
+        SCAFFOLD,
+        ELYTRAFLY
     }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -105,8 +110,15 @@ public class AutoEXPPlus extends Module {
 
     private final Setting<LandingMethod> landingMethod = sgGeneral.add(new EnumSetting.Builder<LandingMethod>()
         .name("landing-method")
-        .description("How to get the player to the ground before repairing. Baritone paths an elytra flight down to the ground beneath you and is the most reliable. Scaffold builds a platform below the player with Meteor's Scaffold module while forcing the player to look up so they fall straight down onto it.")
+        .description("How to get the player to the ground before repairing. Baritone paths an elytra flight down to the ground beneath you and is the most reliable. Scaffold builds a platform below the player with Meteor's Scaffold module while forcing the player to look up so they fall straight down onto it. ElytraFly uses the built-in ElytraFly module's auto-hover to lower the player onto a scaffold platform and keep them hovering while repairing, then resumes the flight via auto pilot.")
         .defaultValue(LandingMethod.BARITONE)
+        .build()
+    );
+
+    private final Setting<Boolean> detectElytraFly = sgGeneral.add(new BoolSetting.Builder()
+        .name("detect-elytra-fly")
+        .description("Automatically switches to the ElytraFly landing method whenever the built-in ElytraFly module is active and the player is flying with it. Only applies to landing, the configured landing-method is used for anything else.")
+        .defaultValue(true)
         .build()
     );
 
@@ -122,11 +134,11 @@ public class AutoEXPPlus extends Module {
 
     private final Setting<Double> scaffoldRadius = sgGeneral.add(new DoubleSetting.Builder()
         .name("scaffold-radius")
-        .description("How big of a platform to build around the player. 1 = 3x3. Only used with the Scaffold landing method.")
+        .description("How big of a platform to build around the player. 1 = 3x3. Used with the Scaffold and ElytraFly landing methods.")
         .defaultValue(1)
         .min(0)
         .sliderMax(6)
-        .visible(() -> landingMethod.get() == LandingMethod.SCAFFOLD)
+        .visible(() -> landingMethod.get() == LandingMethod.SCAFFOLD || landingMethod.get() == LandingMethod.ELYTRAFLY)
         .build()
     );
 
@@ -136,7 +148,17 @@ public class AutoEXPPlus extends Module {
         .defaultValue(20 * 10)
         .range(20, 20 * 60)
         .sliderRange(20, 20 * 30)
-        .visible(() -> landingMethod.get() == LandingMethod.SCAFFOLD)
+        .visible(() -> landingMethod.get() == LandingMethod.SCAFFOLD || landingMethod.get() == LandingMethod.ELYTRAFLY)
+        .build()
+    );
+
+    private final Setting<Integer> elytraLandTimeout = sgGeneral.add(new IntSetting.Builder()
+        .name("elytra-land-timeout")
+        .description("How long to wait for auto-hold and the scaffold platform to lower the player before giving up. Only used with the ElytraFly landing method.")
+        .defaultValue(20 * 20)
+        .range(20, 20 * 60)
+        .sliderRange(20, 20 * 30)
+        .visible(() -> landingMethod.get() == LandingMethod.ELYTRAFLY)
         .build()
     );
 
@@ -152,6 +174,12 @@ public class AutoEXPPlus extends Module {
         PAUSE,
         LANDING,
         REPAIR
+    }
+
+    private enum ElytraFlyPhase {
+        STOPPING,
+        SCAFFOLD,
+        HOVER
     }
 
     private static final List<Class<? extends Module>> MOVEMENT_MODULES = List.of(
@@ -171,6 +199,8 @@ public class AutoEXPPlus extends Module {
     private boolean landingStarted = false;
     private boolean landingFailed = false;
     private float oldXRot = 0f;
+    private LandingMethod activeLandingMethod = LandingMethod.BARITONE;
+    private boolean canRestartFlight = false;
 
     // Baritone state captured before stopping so the goal can be restored after repair
     private boolean baritoneWasActive = false;
@@ -183,6 +213,17 @@ public class AutoEXPPlus extends Module {
     private Double oldRadius = null;
     private Integer oldBlocksPerTick = null;
     private final List<Module> disabledDuringRepair = new ArrayList<>();
+
+    // ElytraFly landing state
+    private boolean elytraScaffoldEnabled = false;
+    private ElytraFly elytraFly = null;
+    private ElytraFlyPhase elytraPhase = ElytraFlyPhase.STOPPING;
+    private ElytraFlightModes oldElytraFlightMode = null;
+    private boolean oldElytraAutoPilot = false;
+    private boolean oldElytraAutoHover = false;
+    private boolean oldElytraUseFireworks = false;
+    private boolean oldElytraKeyShift = false;
+    private boolean oldElytraKeyUp = false;
 
     public AutoEXPPlus() {
         super(Addon.CATEGORY, "auto-exp-plus", "Automatically repairs your armor and tools in pvp.");
@@ -217,55 +258,17 @@ public class AutoEXPPlus extends Module {
                 landedTicks = 0;
                 landingStarted = false;
                 landingFailed = false;
+                canRestartFlight = false;
+                activeLandingMethod = effectiveLandingMethod();
                 phase = Phase.LANDING;
             }
             case LANDING -> {
                 landingTicks++;
 
-                if (landingMethod.get() == LandingMethod.BARITONE) {
-                    if (!landingStarted) {
-                        landingStarted = true;
-                        startBaritoneLanding();
-                    }
-                    if (landingFailed) {
-                        // baritone landing could not start or timed out: wait for a natural landing,
-                        // and do not attempt to restart the trip afterwards
-                        phase = Phase.REPAIR;
-                    } else if (isLanded()) {
-                        if (++landedTicks >= 5) phase = Phase.REPAIR;
-                    } else {
-                        landedTicks = 0;
-                        if (landingTicks >= baritoneLandingTimeout.get()) {
-                            landingFailed = true;
-                            stopBaritoneWithoutRestore();
-                            info("Baritone could not find a landing, waiting for the player to touch down.");
-                            phase = Phase.REPAIR;
-                        }
-                    }
-                } else {
-                    if (!landingStarted) {
-                        landingStarted = true;
-                        oldXRot = mc.player.getXRot();
-                        enableScaffold();
-                    }
-                    // Scaffold: keep looking straight up so the elytra stalls and the player
-                    // falls straight down onto the platform being built below them
-                    mc.player.setXRot(-90f);
-                    if (isLanded()) {
-                        if (++landedTicks >= 5) {
-                            disableScaffold();
-                            mc.player.setXRot(oldXRot);
-                            phase = Phase.REPAIR;
-                        }
-                    } else {
-                        landedTicks = 0;
-                        if (landingTicks >= scaffoldTimeout.get()) {
-                            disableScaffold();
-                            mc.player.setXRot(oldXRot);
-                            info("Could not land on the scaffold platform, waiting for the player to touch down.");
-                            phase = Phase.REPAIR;
-                        }
-                    }
+                switch (activeLandingMethod) {
+                    case BARITONE -> baritoneLanding();
+                    case SCAFFOLD -> scaffoldLanding();
+                    case ELYTRAFLY -> elytraFlyLanding();
                 }
             }
             case REPAIR -> {
@@ -317,6 +320,13 @@ public class AutoEXPPlus extends Module {
 
     private void finishRepair() {
         disableScaffold();
+        if (activeLandingMethod == LandingMethod.ELYTRAFLY && elytraFly != null) {
+            if (canRestartFlight) {
+                restoreElytraFly();
+            } else {
+                stopElytraFlyLanding();
+            }
+        }
         mc.player.setXRot(oldXRot);
         restoreMovementModules();
         restoreBaritone();
@@ -449,6 +459,229 @@ public class AutoEXPPlus extends Module {
         baritoneWasActive = false;
     }
 
+    private LandingMethod effectiveLandingMethod() {
+        if (detectElytraFly.get() && isUsingElytraFly()) return LandingMethod.ELYTRAFLY;
+        return landingMethod.get();
+    }
+
+    private boolean isUsingElytraFly() {
+        ElytraFly module = Modules.get().get(ElytraFly.class);
+        return module != null && module.isActive() && mc.player != null && mc.player.isFallFlying();
+    }
+
+    private void baritoneLanding() {
+        if (!landingStarted) {
+            landingStarted = true;
+            startBaritoneLanding();
+        }
+        if (landingFailed) {
+            // baritone landing could not start or timed out: wait for a natural landing,
+            // and do not attempt to restart the trip afterwards
+            phase = Phase.REPAIR;
+        } else if (isLanded()) {
+            if (++landedTicks >= 5) phase = Phase.REPAIR;
+        } else {
+            landedTicks = 0;
+            if (landingTicks >= baritoneLandingTimeout.get()) {
+                landingFailed = true;
+                stopBaritoneWithoutRestore();
+                info("Baritone could not find a landing, waiting for the player to touch down.");
+                phase = Phase.REPAIR;
+            }
+        }
+    }
+
+    private void scaffoldLanding() {
+        if (!landingStarted) {
+            landingStarted = true;
+            oldXRot = mc.player.getXRot();
+            enableScaffold();
+        }
+        // Scaffold: keep looking straight up so the elytra stalls and the player
+        // falls straight down onto the platform being built below them
+        mc.player.setXRot(-90f);
+        if (isLanded()) {
+            if (++landedTicks >= 5) {
+                disableScaffold();
+                mc.player.setXRot(oldXRot);
+                phase = Phase.REPAIR;
+            }
+        } else {
+            landedTicks = 0;
+            if (landingTicks >= scaffoldTimeout.get()) {
+                disableScaffold();
+                mc.player.setXRot(oldXRot);
+                info("Could not land on the scaffold platform, waiting for the player to touch down.");
+                phase = Phase.REPAIR;
+            }
+        }
+    }
+
+    private void elytraFlyLanding() {
+        if (!landingStarted) {
+            landingStarted = true;
+            oldXRot = mc.player.getXRot();
+            startElytraFlyLanding();
+        }
+        if (landingFailed) {
+            stopElytraFlyLanding();
+            phase = Phase.REPAIR;
+            return;
+        }
+
+        switch (elytraPhase) {
+            case STOPPING -> {
+                if (isElytraStopped()) {
+                    elytraPhase = ElytraFlyPhase.SCAFFOLD;
+                } else if (landingTicks >= elytraLandTimeout.get()) {
+                    landingFailed = true;
+                    info("ElytraFly did not stop in time, waiting for the player to touch down.");
+                }
+            }
+            case SCAFFOLD -> {
+                if (!elytraScaffoldEnabled) {
+                    enableScaffold();
+                    elytraScaffoldEnabled = true;
+                }
+                if (mc.player.onGround() || mc.player.isInWater()) {
+                    disableScaffold();
+                    elytraScaffoldEnabled = false;
+                    mc.player.setXRot(oldXRot);
+                    canRestartFlight = true;
+                    phase = Phase.REPAIR;
+                } else if (platformBuiltBelow()) {
+                    disableScaffold();
+                    elytraScaffoldEnabled = false;
+                    enableElytraHover();
+                    elytraPhase = ElytraFlyPhase.HOVER;
+                } else if (landingTicks >= elytraLandTimeout.get()) {
+                    landingFailed = true;
+                    info("Could not build a platform below the player, waiting for the player to touch down.");
+                }
+            }
+            case HOVER -> {
+                if (isElytraHovering() || mc.player.onGround() || mc.player.isInWater()) {
+                    if (++landedTicks >= 5) {
+                        canRestartFlight = true;
+                        phase = Phase.REPAIR;
+                    }
+                } else {
+                    landedTicks = 0;
+                    if (landingTicks >= elytraLandTimeout.get()) {
+                        landingFailed = true;
+                        info("Could not hover on the platform, waiting for the player to touch down.");
+                    }
+                }
+            }
+        }
+    }
+
+    private void startElytraFlyLanding() {
+        elytraFly = Modules.get().get(ElytraFly.class);
+        if (elytraFly == null || !elytraFly.isActive()) {
+            landingFailed = true;
+            info("ElytraFly module is not active, waiting for the player to touch down.");
+            return;
+        }
+
+        elytraPhase = ElytraFlyPhase.STOPPING;
+        oldElytraAutoPilot = elytraFly.autoPilot.get();
+        oldElytraAutoHover = elytraFly.autoHover.get();
+        oldElytraUseFireworks = elytraFly.useFireworks.get();
+        oldElytraFlightMode = elytraFly.flightMode.get();
+        oldElytraKeyShift = mc.options.keyShift.isDown();
+        oldElytraKeyUp = mc.options.keyUp.isDown();
+
+        // Stop auto piloting forwards and disable firework boosting
+        elytraFly.autoPilot.set(false);
+        elytraFly.useFireworks.set(false);
+        elytraFly.autoHover.set(false);
+        mc.options.keyUp.setDown(false);
+        mc.options.keyShift.setDown(false);
+
+        // auto-hover is incompatible with the Bounce flight mode; temporarily switch to Vanilla
+        if (oldElytraFlightMode == ElytraFlightModes.Bounce) {
+            elytraFly.flightMode.set(ElytraFlightModes.Vanilla);
+        }
+    }
+
+    private boolean isElytraStopped() {
+        if (mc.player == null || mc.level == null) return false;
+        if (mc.player.onGround()) return true;
+        Vec3 v = mc.player.getDeltaMovement();
+        return Math.abs(v.x) < 0.1 && Math.abs(v.z) < 0.1;
+    }
+
+    private boolean platformBuiltBelow() {
+        if (mc.player == null || mc.level == null) return false;
+        if (!mc.player.isFallFlying()) return false;
+        BlockPos below = mc.player.blockPosition().below();
+        BlockState state = mc.level.getBlockState(below);
+        // Player must still be clearly above the placed platform so auto-hover can lower them onto it
+        return state.isSolid() && mc.player.position().y > below.getY() + 1.05;
+    }
+
+    private void enableElytraHover() {
+        if (elytraFly == null) return;
+        elytraFly.autoHover.set(true);
+        mc.options.keyShift.setDown(true);
+    }
+
+    private void disableElytraHover() {
+        if (elytraFly != null) elytraFly.autoHover.set(false);
+        mc.options.keyShift.setDown(false);
+    }
+
+    private boolean isElytraHovering() {
+        if (mc.player == null || mc.level == null) return false;
+        if (!mc.player.isFallFlying()) return false;
+        BlockPos below = mc.player.blockPosition().below();
+        if (!mc.level.getBlockState(below).isSolid()) return false;
+        double hoverY = below.getY() + 1.34;
+        return Math.abs(mc.player.position().y - hoverY) < 0.5;
+    }
+
+    /**
+     * Disables everything the ElytraFly landing method did and does not resume the flight.
+     */
+    private void stopElytraFlyLanding() {
+        disableScaffold();
+        elytraScaffoldEnabled = false;
+        disableElytraHover();
+        if (elytraFly != null) {
+            elytraFly.autoPilot.set(false);
+            elytraFly.useFireworks.set(false);
+            if (oldElytraFlightMode != null) elytraFly.flightMode.set(oldElytraFlightMode);
+        }
+        mc.options.keyShift.setDown(false);
+        mc.options.keyUp.setDown(false);
+        canRestartFlight = false;
+        elytraPhase = ElytraFlyPhase.STOPPING;
+    }
+
+    /**
+     * Restores the built-in ElytraFly module to its pre-repair state so the trip can continue.
+     */
+    private void restoreElytraFly() {
+        if (elytraFly == null) return;
+        disableElytraHover();
+        elytraFly.autoPilot.set(oldElytraAutoPilot);
+        elytraFly.useFireworks.set(oldElytraUseFireworks);
+        if (oldElytraFlightMode != null) {
+            ElytraFlightModes current = elytraFly.flightMode.get();
+            if (current != oldElytraFlightMode && current == ElytraFlightModes.Vanilla) {
+                elytraFly.flightMode.set(oldElytraFlightMode);
+            }
+        }
+        mc.options.keyShift.setDown(oldElytraKeyShift);
+        mc.options.keyUp.setDown(oldElytraKeyUp);
+        info("ElytraFly restored (autoPilot=" + oldElytraAutoPilot + ", autoHover=" + oldElytraAutoHover + ")");
+        elytraFly = null;
+        elytraPhase = ElytraFlyPhase.STOPPING;
+        elytraScaffoldEnabled = false;
+        oldElytraFlightMode = null;
+    }
+
     private BlockPos findGroundBelow(BlockPos start) {
         BlockPos.MutableBlockPos pos = start.mutable();
         int y = Math.min(start.getY(), mc.level.getMaxY());
@@ -463,7 +696,8 @@ public class AutoEXPPlus extends Module {
 
     private boolean isLanded() {
         if (mc.player == null || mc.level == null) return false;
-        return mc.player.onGround() || mc.player.isInWater();
+        if (mc.player.onGround() || mc.player.isInWater()) return true;
+        return activeLandingMethod == LandingMethod.ELYTRAFLY && isElytraHovering();
     }
 
     private void pauseMovementModules() {
