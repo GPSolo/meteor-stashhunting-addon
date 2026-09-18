@@ -1,0 +1,27 @@
+# QoL feature-set files that are synced verbatim (mapping-migrated) from the
+# QoL source branch into every other version branch.
+#
+# This file is the manifest consumed by .github/scripts/sync-qol.sh.
+# Paths are relative to src/main/java/com/stash/hunt/.
+#
+# Rules that keep this manifest honest:
+#   1. Every line must exist as a source file under
+#      src/main/java/com/stash/hunt/ on the QoL source branch.
+#   2. The files are FEATURE implementations that are branch-agnostic apart
+#      from MC mappings -- the whole file is overwritten with the migrated
+#      version. NEVER add a file here whose content is version-specific
+#      (e.g. a branch-pinned import that exists on some versions only).
+#   3. Branch-specific metadata files (Addon.java, jefff-mod.mixins.json,
+#      build.gradle, gradle.properties, mixins json) are handled SEPARATELY by
+#      apply_manifest.py with idempotent inserts -- they are NOT overwritten.
+#
+# Last synced from: 26.2 @ 8df2d48 (TripResumer echo fix)
+# TripResumer.java was added to the QoL set on 26.2 in 4fdf0de.
+
+NewerNewChunksData.java
+mixin/ChatComponentMixin.java
+mixin/ClientPacketListenerMixin.java
+modules/AutoEXPPlus.java
+modules/AutoLogPlus.java
+modules/TrailFollower.java
+modules/TripResumer.java
