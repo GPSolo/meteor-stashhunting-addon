@@ -1,0 +1,105 @@
+# sync-qol.yml -- QoL feature-set synchronizer (runs on the ORPHAN FORK).
+# ---------------------------------------------------------------------------
+# The repo this workflow files enter is the stash-hunting orphan fork
+# (GP/meteor-stashhunting): each branch collides with miles352's original
+# meteor-stashhunting-addon. Nothing here ever opens a PR against miles352's
+# repo or touches his dev_build.yml / pull_request.yml. Phase 1 (1.21.1) proved
+# loom migrateMappings is the SINGLE true migration engine -- its output for
+# all 7 manifest files equals the accepted port BYTE-FOR-BYTE -- so loom, not
+# per-version textual rules, is the source of truth on every branch.
+#
+# DELIVERY MODEL:
+#   QOL_DELIVERY  dry (default)  -> run pipeline, local commit on the branch
+#                                  worktree, NO push. Human reviews the diff,
+#                                  then reruns with `push`.
+#                  push          -> push the branch worktree's committed sync
+#                                  to the fork's per-version branch (dev_build
+#                                  on that branch then gates the build again).
+#                  pr            -> push + open a PR (base: the fork's same
+#                                  version branch; the PR holder is the fork
+#                                  owner, never miles352).
+# ---------------------------------------------------------------------------
+name: sync-qol
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'QoL source; manifest files are migrated from here'
+        required: false
+        default: '26.2'
+      version:
+        description: 'Target version branch (e.g. 1.21.1, 1.21.4, ..., 26.1.2)'
+        required: true
+      qol_delivery:
+        description: 'dry | push | pr'
+        required: false
+        # DEFAULT = pr (auto-PR): after a green build gate the sync hook
+        # pushes the version branch + opens a PR against the fork's own
+        # per-version branch. NEVER opens a PR against miles352/upstream.
+        # Real push/PR still requires the explicit Phase-2 go-ahead -- the
+        # workflow only ever autos when dispatched.
+        default: 'pr'
+      loom:
+        description: 'loom version override (empty = pin from branch gradle.properties)'
+        required: false
+        default: ''
+
+concurrency:
+  group: sync-qol-${{ fromJSON('["26.2","1.21.1","1.21.4","1.21.5","1.21.8","1.21.10","1.21.11","26.1.2"]') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      QOL_DELIVERY: ${{ inputs.qol_delivery || 'pr' }}
+      QOL_SOURCE_BRANCH: ${{ inputs.source_branch || '26.2' }}
+      QOL_LOOM_OVERRIDE: ${{ inputs.loom }}
+      GRADLE_USER_HOME: /home/runner/.gradle
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+
+      - name: Grant QoL stack read permission
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh auth status
+
+      - name: Install tooling scripts
+        run: |
+          cp -r .github/scripts /tmp/qol-scripts
+          echo "QOL_SCRIPT_DIR=/tmp/qol-scripts" >> "$GITHUB_ENV"
+
+      - name: Run QoL sync (dry run by default)
+        run: |
+          chmod +x $QOL_SCRIPT_DIR/sync-qol.sh
+          $QOL_SCRIPT_DIR/sync-qol.sh \
+            --source="origin/${{ env.QOL_SOURCE_BRANCH }}" \
+            --target="${{ inputs.version }}" \
+            --delivery="${{ env.QOL_DELIVERY }}" \
+            --loom="${{ env.QOL_LOOM_OVERRIDE }}"
+
+      - name: Upload build gate log (diagnostics on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-qol-gate
+          path: |
+            qol-tmp/gate.log
+            qol-tmp/*.diff
+          if-no-files-found: ignore
