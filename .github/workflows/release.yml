@@ -15,6 +15,9 @@ on:
         description: 'Version branch to release (mod_version read from its gradle.properties)'
         required: false
         default: '26.2'
+      version:
+        description: 'Optional mod_version override (e.g. 0.16.9-26.2). Defaults to the branch gradle.properties; the file is not committed.'
+        required: false
 
 permissions:
   contents: write
@@ -32,6 +35,10 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ startsWith(inputs.branch || '26.2', '26.') && '25' || '21' }}
+
+      - name: Apply version override
+        if: inputs.version != ''
+        run: sed -i "s/^mod_version=.*/mod_version=${{ inputs.version }}/" gradle.properties
 
       - name: Build
         run: ./gradlew build
