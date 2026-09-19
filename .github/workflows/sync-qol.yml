@@ -80,9 +80,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh auth status
 
-      - name: Install tooling scripts
+      - name: Install tooling scripts (always from the fork's default branch)
         run: |
-          cp -r .github/scripts /tmp/qol-scripts
+          # The checkout ref is the VERSION branch (what loom migrates); it has
+          # no .github/scripts. The tooling stack + manifest ride the fork's
+          # DEFAULT branch (where this workflow lives). Extract from there so
+          # this step is cwd-independent and works on every version branch.
+          DEF="${{ github.event.repository.default_branch }}"
+          git archive "origin/$DEF" .github/scripts | tar -x -C /tmp
+          mv /tmp/.github/scripts /tmp/qol-scripts
           echo "QOL_SCRIPT_DIR=/tmp/qol-scripts" >> "$GITHUB_ENV"
 
       - name: Run QoL sync (dry run by default)
