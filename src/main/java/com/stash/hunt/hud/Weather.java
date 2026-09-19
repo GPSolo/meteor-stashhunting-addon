@@ -36,18 +36,12 @@ public class Weather extends HudElement {
         String textWidth = "Weather:            ";
         setSize(renderer.textWidth(textWidth, true, scale.get()), renderer.textHeight(true, scale.get()));
         String weather = "None";
-        if (mc.world != null && mc.world.getDimension().bedWorks())
-        {
-            if (mc.world.isThundering())
-            {
+        if (mc.world != null && mc.world.getDimension().bedWorks()) {
+            if (mc.world.isThundering()) {
                 weather = "Thundering";
-            }
-            else if (mc.world.isRaining())
-            {
+            } else if (mc.world.isRaining()) {
                 weather = "Raining";
-            }
-            else
-            {
+            } else {
                 weather = "Clear";
             }
         }
