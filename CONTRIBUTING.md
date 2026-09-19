@@ -13,13 +13,13 @@ branch where development happens** — everything else is an automated port of i
 | `26.1.2` | 26.1.2 | Mojang (mojmap) | Port, maintained by CI |
 
 The 1.21.x and 26.1.2 branches are **never edited by hand**. A CI pipeline (`sync-base`)
-keeps a small set of shared feature files in sync across all of them by running each
+keeps the **entire `src/main/java` tree** in sync across all of them by running each
 branch's own `migrateMappings` against the source on `26.2` and delivering pull requests.
 Because of this:
 
 - **Make all pull requests against `26.2`.**
 - Changes pushed directly to a version branch are treated as outside the model and will
-  be overwritten by the next sync of that feature set (or ignored entirely).
+  be overwritten by the next sync.
 
 ## Building locally
 
@@ -48,29 +48,27 @@ Minimap / World Map, XaeroPlus, Baritone).
 - Keep changes consistent with the surrounding code. This is a Meteor addon, so follow
   Meteor Client's own conventions (packages under `com.stash.hunt`, register modules in
   `Addon.java`, etc.).
-- If your change touches one of the **shared synced files** (see below), say so in the PR
-  description — the maintainer will run the sync pipeline after merging so it reaches every
-  version branch automatically.
+- If your change touches code under **`src/main/java`**, say so in the PR description — the
+  maintainer will run the sync pipeline after merging so it reaches every version branch
+  automatically.
 - If your change is **version-specific** (e.g. only relevant on one MC version), note that
-  too, so it stays out of the sync set.
+  too — such code can't live inside the synced `src/main/java` scope and would only exist
+  on `26.2`.
 
-### The synced "QoL" feature set
+### Code under `src/main/java` syncs everywhere
 
-These 7 files on `26.2` are the feature set that gets ported to every other version branch:
+The **entire `src/main/java` tree on `26.2`** is canonical and is ported to every other
+version branch: each branch runs its own mappings migration and its `src/main/java` is
+replaced by the migrated tree.
 
-```
-src/main/java/com/stash/hunt/NewerNewChunksData.java
-src/main/java/com/stash/hunt/mixin/ChatComponentMixin.java
-src/main/java/com/stash/hunt/mixin/ClientPacketListenerMixin.java
-src/main/java/com/stash/hunt/modules/AutoEXPPlus.java
-src/main/java/com/stash/hunt/modules/AutoLogPlus.java
-src/main/java/com/stash/hunt/modules/TrailFollower.java
-src/main/java/com/stash/hunt/modules/TripResumer.java
-```
+Anything inside this scope must stay **branch-agnostic apart from Minecraft mappings**
+(because the same file is migrated and overwritten on every other branch). If a feature
+genuinely needs per-version behavior, it can't live inside this scope (and will only exist
+on `26.2` unless handled specially) — say so in the PR if in doubt.
 
-Anything inside these files must stay **branch-agnostic apart from Minecraft mappings**
-(because the whole file is migrated and overwritten on every other branch). If a feature
-needs per-version behavior, it should not be one of these files.
+`src/main/resources` (mixins.json, fabric.mod.json) is **not** overwritten: mixin
+registrations are added automatically by the pipeline, and per-branch build metadata stays
+put.
 
 ## Submitting a pull request
 

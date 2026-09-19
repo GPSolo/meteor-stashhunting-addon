@@ -1,19 +1,28 @@
-# QoL feature-set files synchronized from the BASE source branch (26.2) into
-# every other version branch.
+# Base sync SCOPE -- synchronized from the BASE source branch (26.2) into every
+# other version branch.
 #
-# This file is the manifest consumed by .github/scripts/sync-base.sh.
-# Paths are relative to src/main/java/com/stash/hunt/.
+# This file is consumed by .github/scripts/sync-base.sh. The sync scope is the
+# ENTIRE src/main/java tree of the source branch (all code: modules, mixins,
+# commands, hud, Addon.java, ...). The source branch (26.2) is canonical for
+# ALL code; every version branch mirrors its src/main/java after running that
+# branch's own loom migrateMappings.
 #
-# Rules that keep this manifest honest:
-#   1. Every line must exist as a source file under
-#      src/main/java/com/stash/hunt/ on the BASE source branch.
-#   2. The files are FEATURE implementations that are branch-agnostic apart
-#      from MC mappings -- the whole file is overwritten with the migrated
-#      version. NEVER add a file here whose content is version-specific
-#      (e.g. a branch-pinned import that exists on some versions only).
-#   3. Branch-specific metadata files (Addon.java, *mixins.json, build.gradle,
-#      gradle.properties) are handled SEPARATELY by apply_manifest.py with
-#      idempotent inserts -- they are NOT overwritten.
+# Rules that keep the scope honest:
+#   1. Every .java file under src/main/java/ on the source branch is synced,
+#      migrated, and overwrites/removes the target's files (mirror semantics).
+#      Anything committed to the source tree reaches every version branch --
+#      there is no per-file manifest to maintain.
+#   2. Code must stay branch-agnostic apart from MC mappings: the whole file is
+#      migrated with each target's loom. If a feature genuinely needs real
+#      per-version behavior, it cannot live inside this scope (and will only
+#      exist on the source branch unless handled specially).
+#   3. Branch metadata OUTSIDE the scope is never overwritten:
+#      - src/main/resources/* (mixins.json, fabric.mod.json, accesswidener):
+#        mixin classes discovered in the migrated src are registered
+#        idempotently by apply_manifest.py.
+#      - build.gradle / gradle.properties: loom/yarn pins and mod version stay
+#        per-branch; apply_manifest.py mirrors 26.2's compileOnly
+#        fabric-resource-loader-v1 into mojmap targets only.
 #
 # SOURCE RESOLUTION (sync-base.sh):
 #   The live origin/<source_branch> HEAD is used by default so new base
@@ -22,12 +31,4 @@
 #   if the live branch cannot be resolved. Bump it when a sync set has been
 #   reviewed and merged across targets.
 #
-# Last synced from: 26.2 @ deff775 (full QoL set merged across targets PRs #2-#7)
-
-NewerNewChunksData.java
-mixin/ChatComponentMixin.java
-mixin/ClientPacketListenerMixin.java
-modules/AutoEXPPlus.java
-modules/AutoLogPlus.java
-modules/TrailFollower.java
-modules/TripResumer.java
+# Last synced from: 26.2 @ deff775 (7-file QoL baseline; whole-tree scope active)

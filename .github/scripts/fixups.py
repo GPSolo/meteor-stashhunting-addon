@@ -3,14 +3,13 @@
 
 WHY THIS FILE IS SMALL:
    loom's migrateMappings converts the *mapping namespace* of the project for a
-   single minecraft version. Because the 7 manifest files are, apart from
-   mapping names, identical on 26.2 and 1.21.1 (proven by the accepted port:
-   deployed 1.21.1 TripResumer etc.), loom's mojmap->yarn pass on the TARGET
-   version covers almost everything. loom 1.8 leaves a small, fully enumerated
-   residual set (mixin @Inject method= strings, a few accessor renames,
-   AttributeModifierSlot.ARMOR, GuiMessage->ChatHudLine). Validated 2026-09-18:
-   migrate + these rules reproduces the accepted 1.21.1 port byte-for-byte for
-   all 7 manifest files.
+   single minecraft version. Because the synced src tree is, apart from mapping
+   names, identical on 26.2 and the yarn branches (proven by the accepted
+   ports), loom's mojmap->yarn pass on the TARGET version covers almost
+   everything. loom 1.8 leaves a small, fully enumerated residual set (mixin
+   @Inject method= strings, a few accessor renames, AttributeModifierSlot.
+   ARMOR, GuiMessage->ChatHudLine). Validated 2026-09-18: migrate + these
+   rules reproduces the accepted ports byte-for-byte.
 
    Newer loom (1.10/1.13/1.14/1.15+) remaps most of the residual set itself
    (1.13+ adds MixinRemapper for method= strings). Every rule is therefore an

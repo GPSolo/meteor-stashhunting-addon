@@ -39,7 +39,7 @@ manifest — version bumps are manual, per branch.
 | **Build Pull Request** | `.github/workflows/pull_request.yml` | `pull_request` | Builds every PR with JDK 21 and uploads `build/libs` as an artifact (the merge gate). |
 | **Publish Pre-Release** | `.github/workflows/publish.yml` | `push` to the 8 version branches + `workflow_dispatch` | Builds the pushed branch and updates the **single** pre-release channel `v<next>-pre` (currently `v0.16.9-pre`). Never marks `Latest`. |
 | **Publish Release** | `.github/workflows/release.yml` | `workflow_dispatch` | Builds the chosen branch and creates the **stable** release `v<mod_version>` (prerelease-label off, marked `Latest`). |
-| **sync-base** | `.github/workflows/sync-base.yml` | `workflow_dispatch` | Ports the 7-file QoL feature set from `26.2` to the requested target branch(es) and delivers PRs. |
+| **sync-base** | `.github/workflows/sync-base.yml` | `workflow_dispatch` | Ports the entire `src/main/java` tree from `26.2` to the requested target branch(es) and delivers PRs. |
 
 ---
 
@@ -83,10 +83,10 @@ with an existing tag is a no-op.
 
 ### 2.3 sync-base (`sync-base.yml`)
 
-Ports the **7-file QoL feature set** (`base-source.txt`, canonical on `26.2`) into target
-version branches using **each target's own pinned loom `migrateMappings`**, delivered as
-PRs. See [section 4](#4-syncing-the-base-feature-set) for usage and
-[section 5](#5-sync-pipeline-internals) for internals.
+Ports the **entire `src/main/java` tree** (canonical on `26.2`; scope declared in
+`base-source.txt`) into target version branches using **each target's own pinned loom
+`migrateMappings`**, delivered as PRs. See [section 4](#4-syncing-the-base-feature-set)
+for usage and [section 5](#5-sync-pipeline-internals) for internals.
 
 ---
 
@@ -121,17 +121,16 @@ unaffected.
 
 ### When to sync
 
-After merging changes to **any of the 7 synced files** on `26.2`. Files:
+After merging **any code change under `src/main/java`** on `26.2` — a module, a mixin, the
+HUD, `Addon.java`, a command — i.e. after almost every merge that touches code.
+Synced scope (see `.github/scripts/base-source.txt` for the rules):
 
 ```
-src/main/java/com/stash/hunt/NewerNewChunksData.java
-src/main/java/com/stash/hunt/mixin/ChatComponentMixin.java
-src/main/java/com/stash/hunt/mixin/ClientPacketListenerMixin.java
-src/main/java/com/stash/hunt/modules/AutoEXPPlus.java
-src/main/java/com/stash/hunt/modules/AutoLogPlus.java
-src/main/java/com/stash/hunt/modules/TrailFollower.java
-src/main/java/com/stash/hunt/modules/TripResumer.java
+src/main/java/   # the ENTIRE tree (modules/, mixin/, commands/, hud/, ...)
 ```
+
+Everything under it propagates to every version branch automatically. `src/main/resources`
+and the build files (`build.gradle`, `gradle.properties`) are **not** synced.
 
 ### How to run it
 
@@ -140,7 +139,7 @@ Actions → **sync-base** → Run workflow. Inputs:
 | Input | Default | Meaning |
 |---|---|---|
 | `version` | `1.21.1,1.21.4,1.21.5,1.21.8,1.21.10,1.21.11,26.1.2` | Target branch(es), comma-separated, no spaces. |
-| `source_branch` | `26.2` | Base/QoL source branch (manifest files are ported from here). |
+| `source_branch` | `26.2` | Base source branch (the `src/main/java` tree is ported from here). |
 | `source_ref` | *(empty)* | Pin source to an exact commit; empty = live `origin/<source_branch>` HEAD. |
 | `delivery` | `pr` | `dry` (local commit, no push) · `push` (push sync branch) · `pr` (push + open/refresh PR). |
 | `loom` | *(empty)* | Loom version override; empty = the target branch's pin. |
@@ -163,30 +162,39 @@ normal, green no-op).
 
 ## 5. Sync pipeline internals
 
-`sync-base.sh` (consumes `base-source.txt`, `fixups.py`, `apply_manifest.py`):
+`sync-base.sh` (consumes `base-source.txt` — the sync *scope* plus the "Last synced from"
+pin — plus `fixups.py`, `apply_manifest.py`):
 
 1. Create `sync/base-<source>-to-<target>` in a **dedicated worktree** (`sync-tmp/`) —
    run-to-run state can never leak.
-2. Copy the **7 manifest files** (mojmap) from the source; temporarily point the target's
-   mappings at official Mojang mappings for the *same* MC version and run:
+2. Copy the **whole `src/main/java` tree** (mojmap) from the source; temporarily point the
+   target's mappings at official Mojang mappings for the *same* MC version and run:
    `./gradlew migrateMappings` with the target's yarn pin; restore `build.gradle`.
+   Mojmap targets (26.1.2) copy the tree verbatim — no migration.
 3. `fixups.py` — small mechanical residual fixes loom leaves behind for that toolchain
    generation (`--verify` fails if any raw mojmap token survives).
-4. `apply_manifest.py` — idempotent metadata: module + mixin registration; for **mojmap
-   targets only** it also mirrors 26.2's `compileOnly fabric-resource-loader-v1` line in
-   `build.gradle` (26.x merged jars declare `MinecraftServer implements DataResourceStore`;
-   only `fabric-resource-loader-v1` provides it).
-5. **Gate:** `./gradlew build` — nothing ships without green.
-6. **Deliver:** `dry` / `push` / `pr` (PR base = target branch, head = sync branch).
+4. `apply_manifest.py` — idempotent metadata: mixins are **auto-discovered** from the
+   migrated `mixin/` package and registered in `*mixins.json` (resources are never
+   overwritten); for **mojmap targets only** it also mirrors 26.2's
+   `compileOnly fabric-resource-loader-v1` line in `build.gradle` (26.x merged jars declare
+   `MinecraftServer implements DataResourceStore`; only `fabric-resource-loader-v1`
+   provides it).
+5. The target's `src/main/java` is **replaced** by the migrated tree (mirror semantics —
+   anything not on the source vanishes from every branch).
+6. **Gate:** `./gradlew build` — nothing ships without green.
+7. **Deliver:** `dry` / `push` / `pr` (PR base = target branch, head = sync branch).
 
 **Exit codes:** `0` ok · `2` usage/ref · `3` migrate/fixups (loom generation gap — fix by
 bumping *that branch's* loom, never by widening fixups) · `4` manifest · `5` build gate ·
 `6` already in sync (no-op).
 
-**Manifest rules** (`.github/scripts/base-source.txt`): (1) each line must exist on the
-source branch; (2) files must be branch-agnostic apart from MC mappings — never add a file
-with version-specific content; (3) `Addon.java`, `*mixins.json`, `build.gradle`,
-`gradle.properties` are handled **only** by `apply_manifest.py` idempotent inserts.
+**Scope rules** (`.github/scripts/base-source.txt`): (1) the sync scope is the entire
+`src/main/java` tree of the source branch — every `.java` under it is ported and
+overwrites the target's, so code must stay branch-agnostic apart from MC mappings; (2)
+`src/main/resources` and `build.gradle`/`gradle.properties` are never overwritten — mixed in
+metadata is handled **only** by `apply_manifest.py`'s idempotent inserts; (3) the "Last
+synced from" line is the validated baseline that labels PR deltas — bump it after a sync
+set merges.
 
 **Workflow mechanics:** a tiny `matrix-prep` bash job splits the comma-separated `version`
 input into JSON (GitHub expressions have no string `replace`); each target runs in its own

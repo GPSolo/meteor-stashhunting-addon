@@ -1,38 +1,42 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sync-base.sh -- base-branch (QoL) feature-set synchronizer
+# sync-base.sh -- base-branch src synchronizer
 #
-# Ports the base feature set (the 7 files in base-source.txt) from the source
-# branch (26.2 -- canonical, mojmap/unobfuscated) into a TARGET version branch
-# (yarn-mapped 1.21.x) via **that branch's own pinned loom migrateMappings**:
+# Ports the ENTIRE src/main/java tree (the sync scope in base-source.txt) from
+# the source branch (26.2 -- canonical, mojmap/unobfuscated) into a TARGET
+# version branch (yarn-mapped 1.21.x) via **that branch's own pinned loom
+# migrateMappings**:
 #
 #   1. Create a per-sync branch from the target in a DEDICATED WORKTREE
 #      (sync-tmp/worktree), so run-to-run state can never leak between syncs:
 #        sync/base-<source>-to-<target>
 #      The target branch itself is NEVER touched (delivery is PR-based).
 #
-#   2. Copy the 7 manifest files from the source commit. The source is written
-#      in Mojang-mapped names; loom's migrateMappings task converts the project's
-#      "from" namespace, so for yarn targets we temporarily point the project's
-#      mappings at official Mojang mappings for the SAME minecraft version, then
-#      run:
-#        ./gradlew migrateMappings --input <manifest-only dir> \
+#   2. Copy the whole src/main/java tree from the source commit. The source is
+#      written in Mojang-mapped names; loom's migrateMappings task converts the
+#      project's "from" namespace, so for yarn targets we temporarily point the
+#      project's mappings at official Mojang mappings for the SAME minecraft
+#      version, then run:
+#        ./gradlew migrateMappings --input <src tree dir> \
 #                                  --output <migrated dir> \
 #                                  --mappings <branch yarn_mappings>
 #      and restore build.gradle. loom 1.8 -> 1.14 all accept these options.
+#      The target's src/main/java is then REPLACED by the migrated tree
+#      (mirror semantics -- anything not on the source vanishes everywhere).
 #
 #   3. fixups.py --fix   : apply the small mechanical residual set loom leaves
 #                          behind for that toolchain generation (validated
 #                          byte-for-byte against the accepted 1.21.1 port).
 #      fixups.py --verify: fail if any raw mojmap token survives migration.
 #
-#   4. apply_manifest.py : idempotent metadata edits (module + mixin
-#                          registration; plus, for MOJMAP targets only, the
+#   4. apply_manifest.py : idempotent metadata edits. Mixin classes discovered
+#                          in the migrated mixin/ package are auto-registered
+#                          in *mixins.json (resources are never overwritten);
+#                          for MOJMAP targets only it mirrors 26.2's
 #                          build.gradle compileOnly fabric-resource-loader-v1
-#                          mirror of 26.2 -- see the 26.x merged-jar
-#                          MinecraftServer/DataResourceStore note) -- the only
-#                          thing that touches Addon.java / *mixins.json /
-#                          build.gradle, never their per-branch content.
+#                          (see the 26.x merged-jar MinecraftServer/
+#                          DataResourceStore note). Addon.java module
+#                          registration arrives with the synced source itself.
 #
 #   5. GATE: ./gradlew build -- the same gate CI runs. If it fails, nothing is
 #      pushed and the run exits non-zero.
@@ -133,12 +137,12 @@ echo "[sync-base] source: ${source_branch} @ ${source_ref:0:12} (baseline pin: $
 echo "[sync-base] target: ${target} (branch: $(git rev-parse --abbrev-ref HEAD))"
 
 # ---------------------------------------------------------------------------
-# manifest (paths relative to src/main/java/com/stash/hunt/)
+# sync scope -- base-source.txt declares the pin only; the SCOPE is always the
+# whole src/main/java tree of the source commit (see file header for rules).
 # ---------------------------------------------------------------------------
 MANIFEST="$SCRIPT_DIR/base-source.txt"
-[ -f "$MANIFEST" ] || die "missing manifest: $MANIFEST"
-mapfile -t MANIFEST_FILES < <(grep -vE '^\s*(#|$)' "$MANIFEST")
-[ "${#MANIFEST_FILES[@]}" -gt 0 ] || die "manifest is empty: $MANIFEST"
+[ -f "$MANIFEST" ] || die "missing scope/pin file: $MANIFEST"
+SRC_TREE="src/main/java"
 
 sync_branch="sync/base-${source_branch}-to-${target}"
 sync_tmp="$REPO_ROOT/sync-tmp"
@@ -184,29 +188,27 @@ is_mojmap=0
 [ -z "$yarn" ] && is_mojmap=1   # no yarn_mappings -> unobfuscated/mojmap target
 echo "[sync-base] mc=${mc_version} loom=${loom:-<none>} yarn=${yarn:-<none/mojmap>} mojmap_target=$is_mojmap"
 
-import_dir="$sync_tmp/import/src/main/java"
+import_dir="$sync_tmp/import/$SRC_TREE"
 migrated_dir="$sync_tmp/migrated"
 mkdir -p "$import_dir" "$migrated_dir"
 
-# copy manifest files from source into the import tree (mojmap-written)
-for f in "${MANIFEST_FILES[@]}"; do
-  src_path="src/main/java/com/stash/hunt/${f}"
-  if ! git cat-file -e "${source_ref}:${src_path}" >/dev/null 2>&1; then
-    die "source ${source_ref:0:12} missing manifest path: ${src_path}"
-  fi
-  mkdir -p "$import_dir/com/stash/hunt/$(dirname "$f")"
-  git show "${source_ref}:${src_path}" > "$import_dir/com/stash/hunt/${f}"
+# copy the WHOLE src/main/java tree from the source commit (mojmap-written)
+mapfile -t SRC_FILES < <(git ls-tree -r --name-only "$source_ref" -- "$SRC_TREE")
+[ "${#SRC_FILES[@]}" -gt 0 ] || die "source ${source_ref:0:12} has no files under $SRC_TREE"
+for src_path in "${SRC_FILES[@]}"; do
+  rel="${src_path#"$SRC_TREE"/}"
+  mkdir -p "$import_dir/$(dirname "$rel")"
+  git show "${source_ref}:${src_path}" > "$import_dir/$rel"
 done
-echo "[sync-base] imported ${#MANIFEST_FILES[@]} manifest files from ${source_branch}"
+echo "[sync-base] imported ${#SRC_FILES[@]} files (whole $SRC_TREE) from ${source_branch}"
 
 # ---------------------------------------------------------------------------
 # 2+3. migrate + fixups (yarn targets only)
 # ---------------------------------------------------------------------------
 if [ "$is_mojmap" -eq 1 ]; then
-  echo "[sync-base] mojmap/unobfuscated target: copying manifest verbatim (no loom migrate)"
-  for f in "${MANIFEST_FILES[@]}"; do
-    cp "$import_dir/com/stash/hunt/${f}" "src/main/java/com/stash/hunt/${f}"
-  done
+  echo "[sync-base] mojmap/unobfuscated target: replacing $SRC_TREE verbatim (no loom migrate)"
+  rm -rf "$SRC_TREE"; mkdir -p "$SRC_TREE"
+  cp -r "$import_dir"/. "$SRC_TREE/"
 else
   # point the project's "from" namespace at official mojmap for THIS mc version
   if ! grep -q 'mappings "net\.fabricmc:yarn:\${project\.yarn_mappings}:v2"' build.gradle; then
@@ -232,12 +234,11 @@ else
   python3 "$SCRIPT_DIR/fixups.py" "$migrated_dir" "$mc_version" --verify \
     || die "fixups --verify found surviving mojmap tokens; bump THIS branch's loom (not the rules)" 3
 
-  for f in "${MANIFEST_FILES[@]}"; do
-    migrated_file="$migrated_dir/com/stash/hunt/${f}"
-    [ -f "$migrated_file" ] || die "migrateMappings produced no output for ${f}"
-    cp "$migrated_file" "src/main/java/com/stash/hunt/${f}"
-  done
-  echo "[sync-base] migrated ${#MANIFEST_FILES[@]} files into src/"
+  n_files="$(find "$migrated_dir" -name '*.java' | wc -l)"
+  [ "$n_files" -gt 0 ] || die "migrateMappings produced no .java output in $migrated_dir" 3
+  rm -rf "$SRC_TREE"; mkdir -p "$SRC_TREE"
+  cp -r "$migrated_dir"/. "$SRC_TREE/"
+  echo "[sync-base] replaced $SRC_TREE with ${n_files} migrated files"
 fi
 
 # ---------------------------------------------------------------------------
@@ -277,7 +278,7 @@ fi
 base="$(sed -nE 's/^# Last synced from: [^@]+ @ ([0-9a-f]+).*/\1/p' "$MANIFEST" | head -1 || true)"
 delta=""
 if [ -n "$base" ] && git cat-file -e "${base}^{commit}" >/dev/null 2>&1; then
-  delta="$(git log --oneline --no-merges "${base}..${source_ref}" -- "src/main/java/com/stash/hunt" 2>/dev/null | head -20 || true)"
+  delta="$(git log --oneline --no-merges "${base}..${source_ref}" -- "$SRC_TREE" 2>/dev/null | head -20 || true)"
 fi
 [ -n "$delta" ] || delta="(no new source commits since baseline ${base:-none}; initial/refresh port)"
 

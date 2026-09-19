@@ -1,15 +1,16 @@
-# sync-base.yml -- base-branch (QoL) feature-set synchronizer (GPSolo/meteor-stashhunting-addon).
+# sync-base.yml -- base-branch src synchronizer (GPSolo/meteor-stashhunting-addon).
 # -----------------------------------------------------------------------------
-# Ports the base feature set (base-source.txt -- 7 files, canonical on the 26.2
-# branch) into every target version branch (1.21.1/1.21.4/1.21.5/1.21.8/
-# 1.21.10/1.21.11/26.1.2) using each target's own pinned loom migrateMappings
-# (see .github/scripts/sync-base.sh for the pipeline):
+# Ports the ENTIRE src/main/java tree (canonical on the 26.2 branch; the sync
+# scope is declared in base-source.txt) into every target version branch
+# (1.21.1/1.21.4/1.21.5/1.21.8/1.21.10/1.21.11/26.1.2) using each target's own
+# pinned loom migrateMappings (see .github/scripts/sync-base.sh for the
+# pipeline):
 #
 #   sync/base-<source>-to-<target>  (never touches the target branch)
-#        -> copy 7 manifest files from source
+#        -> copy whole src/main/java tree from source
 #        -> loom migrateMappings (temporary mojmap mappings on the target, same
-#           minecraft version) + residual fixups
-#        -> manifest registration (module + mixins) -- idempotent
+#           minecraft version) + residual fixups; mojmap targets copy verbatim
+#        -> metadata registration (mixins auto-discovered) -- idempotent
 #        -> ./gradlew build gate  (nothing ships without a green build)
 #        -> dry | push | pr
 #
@@ -35,7 +36,7 @@ on:
         required: true
         default: '1.21.1,1.21.4,1.21.5,1.21.8,1.21.10,1.21.11,26.1.2'
       source_branch:
-        description: 'Base (QoL source) branch -- manifest files are ported from here'
+        description: 'Base source branch -- the src/main/java tree is ported from here'
         required: false
         default: '26.2'
       source_ref:

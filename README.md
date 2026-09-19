@@ -50,21 +50,31 @@
 - EntityList
   - Displays the count of all the entities within render distance. (Made by [g-a-l-a-x-i-a](https://github.com/g-a-l-a-x-i-a))
 
-## Maintenance: Base Sync (QoL porting)
-The QoL feature set (7 files, canonical on the `26.2` base branch: `NewerNewChunksData`,
-`ChatComponentMixin`, `ClientPacketListenerMixin`, `AutoEXPPlus`, `AutoLogPlus`,
-`TrailFollower`, `TripResumer`) is kept in sync across every version branch with an
-automated pipeline (`sync-base` workflow → `.github/scripts/sync-base.sh`).
+## Automation & Releases
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute (build, PRs, bug reports).
+- [DEVELOPMENT.md](DEVELOPMENT.md) — maintainer reference: every GitHub Action, how to release/pre-release, and how the base sync works.
+- **Test builds:** every push to any version branch is published automatically to the `v0.16.9-pre` pre-release (one jar per version, never shown as Latest) — grab fresh jars there.
+- **Stable releases** are cut manually with the **Publish Release** workflow — see DEVELOPMENT.md.
+
+## Maintenance: Base Sync (whole src tree)
+The ENTIRE `src/main/java` tree (canonical on the `26.2` base branch) is kept in sync
+across every version branch with an automated pipeline
+(`sync-base` workflow → `.github/scripts/sync-base.sh`). CommandExample, a HUD module, a
+mixins tweak — anything committed under `src/main/java` on `26.2` reaches every supported
+version.
 
 How it works:
 - A run creates a dedicated worktree from `origin/<target>` on a `sync/base-26.2-to-<target>`
   branch (**the target branch itself is never touched**) and delivers as PRs.
-- Yarn targets (1.21.x): loom `migrateMappings` converts the 26.2 mojmap code with that
+- Yarn targets (1.21.x): the whole tree is run through loom `migrateMappings` with that
   branch's own pinned loom, residual mechanical fixups are applied (`.github/scripts/fixups.py`),
-  and module/mixin registration is done idempotently (`.github/scripts/apply_manifest.py`).
-- Mojmap target (26.1.2): files are copied verbatim; `apply_manifest` also adds the
+  and mixin registration in `mixins.json` is auto-applied idempotently (`.github/scripts/apply_manifest.py`).
+  The target's `src/main/java` is then **replaced** by the migrated tree (mirror semantics).
+- Mojmap target (26.1.2): the tree is copied verbatim; `apply_manifest` also adds the
   `compileOnly fabric-resource-loader-v1` line mirroring 26.2's build.gradle (the 26.x
   merged game jar declares `MinecraftServer implements DataResourceStore`).
+- `src/main/resources` (mixins.json, fabric.mod.json) is never overwritten — mixins are
+  auto-registered, per-branch metadata stays put.
 - A `./gradlew build` gate must pass before anything is committed; exit codes:
   `0` ok, `2` usage/ref, `3` migrate/fixups, `4` manifest, `5` build gate, `6` already in sync.
 - PR titles describe what is being added (set `pr_title` at dispatch); PR bodies list the
@@ -72,7 +82,7 @@ How it works:
 
 Dispatch inputs (`workflow_dispatch` on the default branch):
 - `version` — target branch(es), comma-separated, e.g. `1.21.1,1.21.8,26.1.2`.
-- `source_branch` — base/QoL source (default `26.2`).
+- `source_branch` — base source (default `26.2`).
 - `source_ref` — pin an exact source commit (empty = live `origin/<source_branch>` HEAD).
 - `delivery` — `dry` (local commit only), `push`, or `pr` (default; opens/refreshes the PR).
 - `loom` — override the target's loom pin (empty = branch pin).

@@ -1,58 +1,53 @@
 #!/usr/bin/env python3
 """Idempotent manifest application -- the ONLY thing that edits metadata.
 
-WHAT IT DOES (ground-truthed across origin/26.2 <-> origin/1.21.1):
-   Every toolchain branch pins loom, and loom's migrateMappings is the single
-   engine that rewrites BOTH code and strings inside the manifest files
-   (Phase 1 proved byte-exactness on 1.21.1 for all 7 files: raw loom output ==
-   accepted port). So the code files themselves need NO help here.
+WHAT IT DOES (whole-tree sync):
+   The sync pipeline ports the ENTIRE src/main/java tree from the 26.2 mojmap
+   source; loom migrateMappings rewrites every .java (code + strings) into the
+   target's namespace (validated byte-exact). So the code files themselves need
+   NO help here.
 
-   But three *metadata* edits are not in any .java the loom consumes, and are
-   the exact spots that differ between the accepted 1.21.1 port and 26.2:
+   What remains are *metadata* edits that are not in any .java the loom
+   consumes:
 
      1. MODULE REGISTRATION (Addon.java)
-          origin/26.2    : Modules.get().add(new TripResumer());   (present)
-          origin/1.21.1  : (ABSENT -- grep count 0 in d20269c port)
-        -> this script inserts the registration line immediately AFTER the
-           ElytraFlyPlusPlus registration anchor, which is present on every
-           known branch (verified 26.2:82 and accepted-1.21.1:82).
-        -> Idempotent: if `new TripResumer()` (or any manifest module reg)
-           already exists in Addon.java, the insert is skipped.
+        Addon.java is INSIDE the synced tree, so module registration travels
+        with the migrated copy automatically. The TripResumer insert below is
+        kept purely as an idempotent safety net for historical divergence.
 
      2. MIXIN REGISTRATION (jefff-mod.mixins.json "client" array)
-          origin/26.2 client: [
-              ..., ClientPacketListenerMixin, ChatComponentMixin ]  (2 new)
-          origin/1.21.1 client: [ LivingEntityMixin, EntityMixin,
-              KeyBindingMixin, XaeroDrawingMixin ]                 (neither)
-        -> this script appends the two manifest mixin classes to the branch's
-           mixins.json client[] array if (and only if) they are missing.
-        -> Idempotent: membership is checked before append.
+        mixins.json lives in src/main/resources, which the sync NEVER
+        overwrites. With whole-tree sync the mixin class list is AUTO-
+        DISCOVERED from the migrated mixin/ package (_discover_mixins), so a
+        new mixin added on 26.2 registers itself on every branch. Idempotent:
+        membership is checked before append.
 
      3. MOJMAP TARGET build.gradle DEPENDENCY (26.1.2 / any unobfuscated
         target). The loom merged game jar for the 26.x MC blob declares
         `MinecraftServer implements net.fabricmc.fabric.api.resource.v1.
         DataResourceStore`, so compiling ANY code that touches MinecraftServer
-        (the QoL serverKey() chain) requires that fabric interface on the
-        compile classpath. This script mirrors origin/26.2's exact
-        compileOnly fabric-resource-loader-v1 line into the mojmap target's
-        build.gradle (idempotent, verified). Yarn targets (1.21.x) are a
-        no-op: their merged jars do not implement the fabric interface.
+        requires that fabric interface on the compile classpath. This script
+        mirrors origin/26.2's exact compileOnly fabric-resource-loader-v1 line
+        into the mojmap target's build.gradle (idempotent, verified). Yarn
+        targets (1.21.x) are a no-op: their merged jars do not implement the
+        fabric interface.
 
    SAFETY INVARIANT (mirrors fixups.py):
      - `verify` mode is what the build gate runs: it asserts the registrations
-       EXIST in the MIGRATED output (Addon.java must contain the TripResumer
-       registration AND mixins.json client[] must contain both mixin classes;
-       mojmap targets must also carry the fabric-resource-loader compileOnly
-       line). If any is missing the sync FAILS -- never silently ships a port
-       that would surface as "this intended QoL module isn't registered" or
-       that cannot compile against the merged game jar's fabric interface.
+       EXIST in the MIGRATED output (Addon.java must contain the module
+       registrations AND mixins.json client[] must contain every discovered
+       mixin class; mojmap targets must also carry the fabric-resource-loader
+       compileOnly line). If any is missing the sync FAILS -- never silently
+       ships a port that would surface as "this intended module isn't
+       registered" or that cannot compile against the merged game jar's fabric
+       interface.
 """
 import json
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# QoL modules that must be registered in Addon.java, keyed with their anchor.
+# Modules that must be registered in Addon.java, keyed with their anchor.
 # (module_class, anchor_registration). Anchor must exist on ALL branches; it is
 # the same on accepted-1.21.1 (line 82) and 26.2 (line 30-region).
 MODULE_REGISTRATIONS: List[Tuple[str, str]] = [
@@ -60,13 +55,9 @@ MODULE_REGISTRATIONS: List[Tuple[str, str]] = [
      "Modules.get().add(new ElytraFlyPlusPlus());"),
 ]
 
-# Mixin classes (short names) that must be present in the branch's
-# jefff-mod.mixins.json "client" array. The mixins.json filename itself is
-# identical on both ends (jefff-mod.mixins.json) -- verified.
-MIXIN_CLASSES: List[str] = [
-    "ChatComponentMixin",
-    "ClientPacketListenerMixin",
-]
+# Mixin classes are AUTO-DISCOVERED from the migrated src (mixin/ package) --
+# see _discover_mixins(). mixins.json lives in resources, which the sync never
+# overwrites, so this is what keeps new mixins registered on every branch.
 
 # ---------------------------------------------------------------------------
 # Mojmap-target build.gradle dependency (mirrors origin/26.2 build.gradle)
@@ -75,8 +66,8 @@ MIXIN_CLASSES: List[str] = [
 # 1b9cc516b9 for 26.1.2 and 26.2) declares MinecraftServer as implementing
 # net.fabricmc.fabric.api.resource.v1.DataResourceStore. javac therefore
 # needs that interface on the compile classpath the moment any source touches
-# MinecraftServer (the QoL port's serverKey() calls
-# mc.getSingleplayerServer().getWorldData().getLevelName()). 26.2 pins the
+# MinecraftServer (any synced code that touches MinecraftServer -- e.g.
+# serverKey() calls mc.getSingleplayerServer().getWorldData().getLevelName()). 26.2 pins the
 # interface compileOnly -- mirror its exact line here, idempotently.
 # Yarn-mapped targets (1.21.x) never get this: their merged jars do not carry
 # the fabric interface, and anything extra would be dead weight.
@@ -127,7 +118,17 @@ def _register_modules(addon: Path) -> int:
     return added
 
 
-def _register_mixins(mixins_json: Path) -> int:
+def _discover_mixins(hunt_root: Path) -> List[str]:
+    """Every mixin class (short name) under the synced mixin/ package.
+    hunt_root = <root>/src/main/java/com/stash/hunt. With whole-tree sync this
+    is the single source of truth for mixins.json registration."""
+    mixin_dir = hunt_root / "mixin"
+    if not mixin_dir.is_dir():
+        return []
+    return sorted(p.stem for p in mixin_dir.glob("*.java"))
+
+
+def _register_mixins(mixins_json: Path, mixin_classes: List[str]) -> int:
     data = json.loads(mixins_json.read_text(encoding="utf-8"))
     client = data.get("client")
     if not isinstance(client, list):
@@ -135,7 +136,7 @@ def _register_mixins(mixins_json: Path) -> int:
               file=sys.stderr)
         return -1
     added = 0
-    for cls in MIXIN_CLASSES:
+    for cls in mixin_classes:
         # mixins.json stores full class names (ChatComponentMixin, ...) -- both
         # 26.2 and every yarn branch verified.
         if cls not in client:
@@ -189,8 +190,10 @@ def apply_manifest(branch_root: Path) -> Tuple[int, int]:
         return (-1, 0)
     mods = _register_modules(addon)
     mixins = []
+    hunt_root = branch_root / "src" / "main" / "java" / "com" / "stash" / "hunt"
+    discovered = _discover_mixins(hunt_root)
     for mj in sorted((branch_root / "src" / "main" / "resources").glob("*mixins.json")):
-        n = _register_mixins(mj)
+        n = _register_mixins(mj, discovered)
         if n < 0:
             return (-1, 0)
         mixins.append(n)
@@ -218,10 +221,12 @@ def verify_manifest(branch_root: Path) -> int:
                   file=sys.stderr)
             problems += 1
     resources = branch_root / "src" / "main" / "resources"
+    hunt_root = branch_root / "src" / "main" / "java" / "com" / "stash" / "hunt"
+    discovered = _discover_mixins(hunt_root)
     for mj in sorted(resources.glob("*mixins.json")):
         data = json.loads(mj.read_text(encoding="utf-8"))
         client = data.get("client") or []
-        for cls in MIXIN_CLASSES:
+        for cls in discovered:
             if cls not in client:
                 print(f"[verify] {mj.name} missing mixin class {cls}",
                       file=sys.stderr)
