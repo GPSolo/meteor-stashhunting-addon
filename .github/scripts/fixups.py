@@ -144,8 +144,8 @@ EXTRA_DENYLIST: dict = {
     "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
     "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
     # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again -- .name() is
-    # CORRECT here; canHaveWeather() still absent
-    "1.21.10": ["isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
+    # CORRECT here, getName() must NOT survive; canHaveWeather() still absent
+    "1.21.10": ["isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "getGameProfile().getName()"],
     # late yarn (1.21.11): GameProfile.name is a FIELD again -- .name() is
     # CORRECT here and must NOT be banned; canHaveWeather() EXISTS here and
     # must NOT be banned; getSelectedSlot() method is the API
@@ -248,6 +248,19 @@ WHOLE_TREE_YARN_RULES: List[Tuple[str, str, bool]] = [
     # 26.2 mojmap SoundInstance.getIdentifier() (yarn 1.21.x: getId());
     # remapped by loom 1.14.9, left for 1.13 -- idempotent either way.
     ("event.sound.getIdentifier()", "event.sound.getId()", False),
+    # 26.2 mojmap ResourceLocation.parse(String) (renamed class Identifier +
+    # parse factory); yarn 1.21.x has no parse() -- it's Identifier.of().
+    # loom 1.14.9 remaps it, 1.13 does not; Identifier.of() is the accepted
+    # form on every yarn branch (idempotent no-op where loom already fixed it).
+    ("Identifier.parse(", "Identifier.of(", False),
+]
+
+# GameProfile.name on 1.21.10 is the public FIELD again (mojmap-style) --
+# loom 1.13 leaves 26.2's getName() call unmigrated and 1.21.10 has NO
+# getName(); the correct form is .name() (loom 1.14.9 on 1.21.11 remaps it by
+# itself, so this rule lives only in the "1.21.10" slice, never in "*").
+GP_NAME_FIELD: List[Tuple[str, str, bool]] = [
+    ("getGameProfile().getName()", "getGameProfile().name()", False),
 ]
 
 # ClientLevel.canHaveWeather() is a 26.2 call that yarn added partway through
@@ -270,9 +283,11 @@ FIXUPS: dict = {
               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
-    # 1.21.10 (loom 1.13): same modern slice; canHaveWeather still absent
-    "1.21.10": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
-               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+    # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again (getName() is
+    # gone) -- getName() -> .name() via GP_NAME_FIELD (reverse of the getter
+    # rule used below 1.21.10); canHaveWeather still absent
+    "1.21.10": COMMON_YARN_RULES + MODERN_YARN_RULES
+               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE + GP_NAME_FIELD,
     # 1.21.11 (loom 1.14.9): GameProfile.name is a FIELD again, so the
     # getName() getter rule must NOT fire; canHaveWeather() EXISTS here so the
     # bedWorks() rule must NOT fire -- MODERN + WHOLE_TREE only
