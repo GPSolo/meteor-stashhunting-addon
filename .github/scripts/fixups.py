@@ -131,8 +131,9 @@ DENYLIST = [
     # import unmigrated) and SoundInstance.getIdentifier() (yarn: getId()).
     "import net.minecraft.resources.Identifier;",
     "event.sound.getIdentifier()",
-    # 26.2 mojmap ClientPacketListener.decoratedHashOpsGenenerator() -> yarn
-    # getComponentHasher() (see WHOLE_TREE_YARN_RULES): survival = new site.
+    # 26.2 mojmap ClientPacketListener.decoratedHashOpsGenenerator(): must never
+    # survive on any yarn branch -- every branch's fixup (or loom) rewrites it
+    # to the version-correct form (see the hasher notes after WHOLE_TREE_...).
     "decoratedHashOpsGenenerator",
 ]
 
@@ -146,7 +147,7 @@ EXTRA_DENYLIST: dict = {
     # hybrid (1.21.4)/mid (1.21.5, 1.21.8): isFallFlying and no-arg getTopY()
     # are gone; getName() getter is the API; slot is still the field on 1.21.4
     "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder"],
-    "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder"],
+    "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "getComponentHasher()"],
     "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()"],
     # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again -- .name() is
     # CORRECT here, getName() must NOT survive; canHaveWeather() still absent
@@ -269,12 +270,19 @@ WHOLE_TREE_YARN_RULES: List[Tuple[str, str, bool]] = [
     # loom 1.14.9 remaps it, 1.13 does not; Identifier.of() is the accepted
     # form on every yarn branch (idempotent no-op where loom already fixed it).
     ("Identifier.parse(", "Identifier.of(", False),
-    # 26.2 mojmap ClientPacketListener.decoratedHashOpsGenenerator() (yes,
-    # that is the shipped name). loom 1.14.9 (1.21.11) and 1.13 (1.21.8/
-    # 1.21.10) remap it to yarn's getComponentHasher(); loom 1.10 (1.21.5) and
-    # 1.8 (1.21.1/1.21.4) leave it -- hence the idempotent global rule.
-    ("decoratedHashOpsGenenerator()", "getComponentHasher()", False),
 ]
+
+# The 26.2 hasher method is VERSION-SLICED (loom's output differs per loom
+# generation; never a global rule):
+#   26.2 mojmap ClientPacketListener.decoratedHashOpsGenenerator() (yes, that
+#   is the shipped name). loom 1.13/1.14.9 (1.21.8/1.21.10/1.21.11) remap it to
+#   yarn's getComponentHasher() -- CORRECT there, no rule. loom 1.10 (1.21.5)
+#   also rewrites it to getComponentHasher(), but 1.21.5 yarn only knows
+#   method_68823() (the accepted port's form) -- see the 1.21.5 slice. loom 1.8
+#   (1.21.1/1.21.4) leaves the whole HashedStack block unmigrated -- handled by
+#   the ELYTRA_LEGACY_SWAP rules, never by a global token rewrite.
+#   DENYLIST keeps bare `decoratedHashOpsGenenerator` + `getComponentHasher`
+#   failsafes so a NEW drift site fails --verify.
 
 # meteor-client's MeteorToast gained a Builder (title/icon/text) in a late
 # 1.21.8-era snapshot; 1.21.1/1.21.4/1.21.5 meteor-client only has the
@@ -310,10 +318,13 @@ FIXUPS: dict = {
               + PROFILE_ACCESSOR_RULES + METEOR_TOAST_CTOR_RULES
               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.5 (loom 1.10): modern API (method-based slot) but the pre-Builder
-    # meteor-client; gets the constructor-form toast + the componentHasher rule
+    # meteor-client; gets the constructor-form toast. loom 1.10 rewrites the
+    # 26.2 mojmap hasher to getComponentHasher(), which does NOT exist on
+    # 1.21.5 -- the accepted form is the unmapped method_68823().
     "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
               + PROFILE_ACCESSOR_RULES + METEOR_TOAST_CTOR_RULES
-              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE
+              + [("getComponentHasher()", "method_68823()", False)],
     # 1.21.8 (loom 1.13): modern API (method-based slot)
     "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
               + PROFILE_ACCESSOR_RULES + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
