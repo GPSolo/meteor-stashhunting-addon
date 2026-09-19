@@ -74,6 +74,14 @@ die() { printf 'fatal: %s\n' "$*" >&2; exit "${2:-2}"; }
 # ---------------------------------------------------------------------------
 version="$(grep -E '^minecraft_version=' gradle.properties | cut -d= -f2)"
 loom="$(grep -E '^loom_version=' gradle.properties | cut -d= -f2 || true)"
+# Loom is pin home is BRANCH-SPECIFIC: some branches pin in gradle.properties
+# (loom_version=), others ONLY in build.gradle's plugin block
+# (id "fabric-loom" version "1.8-SNAPSHOT"). The matrix probe proved every
+# yarn branch uses the build.gradle home, so probe BOTH homes — the empty
+# gradle.properties key alone is NOT "mojmap/no-loom", it's <none>.
+if [ -z "$loom" ]; then
+  loom="$(sed -nE 's/.*id "fabric-loom" version "([^"]+)".*/\1/p' build.gradle | head -1 || true)"
+fi
 yarn="$(grep -E '^yarn_mappings=' gradle.properties | cut -d= -f2 || true)"
 [ -n "$version" ] || die 'gradle.properties missing minecraft_version'
 echo "[sync-qol] target mc=$version loom=${loom:-<none/mojmap>} yarn=${yarn:-<none>}"
