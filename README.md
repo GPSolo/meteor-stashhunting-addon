@@ -69,8 +69,12 @@ How it works:
   merged game jar declares `MinecraftServer implements DataResourceStore`).
 - `src/main/resources` (mixins.json, fabric.mod.json) is never overwritten — mixins are
   auto-registered, per-branch metadata stays put.
-- A `./gradlew build` gate must pass before anything is committed; exit codes:
-  `0` ok, `2` usage/ref, `3` migrate/fixups, `4` manifest, `5` build gate, `6` already in sync.
+- The pipeline mirrors the whole tree even when a gate fails: if the `./gradlew build` gate
+  (exit `5`) or `fixups --verify` (exit `3`) fails, the migrated tree is **still delivered** as
+  a PR marked with the failing check + a log excerpt, so remaining port issues can be fixed
+  directly on the sync branch instead of stalling the pipeline. The run stays red; exit codes:
+  `0` ok, `2` usage/ref, `3` migrate crash (no PR) or fixups verify (delivered), `4` manifest
+  (no PR), `5` build gate (delivered), `6` already in sync.
 - PR titles describe what is being added (set `pr_title` at dispatch); PR bodies list the
   source commits being ported (delta since the `base-source.txt` "Last synced from" pin).
 
