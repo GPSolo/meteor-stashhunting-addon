@@ -1,0 +1,75 @@
+# publish.yml -- pre-release per commit (GPSolo/meteor-stashhunting-addon).
+# -----------------------------------------------------------------------------
+# Replaces the template dev_build.yml (which overwrote a single tag on every
+# push and re-marked it Latest on the releases page).
+#
+# Every push to a VERSION branch builds and publishes a UNIQUE pre-release
+# tagged <mod_version>-<short-sha> (prerelease, never Latest), so testers
+# always get the newest jar while the Releases list stays clean until an
+# explicit stable release (release.yml). Sync branches (sync/base-*) are
+# never pushed by hand and are not in the branch list, so they never publish.
+# -----------------------------------------------------------------------------
+name: Publish Pre-Release
+
+on:
+  push:
+    branches:
+      - "26.2"
+      - "26.1.2"
+      - "1.21.1"
+      - "1.21.4"
+      - "1.21.5"
+      - "1.21.8"
+      - "1.21.10"
+      - "1.21.11"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ startsWith(github.ref_name, '26.') && '25' || '21' }}
+
+      - name: Build
+        run: ./gradlew build
+
+      - name: Version + tag
+        run: |
+          MOD_VERSION="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          SHORT="$(git rev-parse --short HEAD)"
+          echo "MOD_VERSION=$MOD_VERSION" >> "$GITHUB_ENV"
+          echo "SHORT=$SHORT" >> "$GITHUB_ENV"
+          echo "TAG=${MOD_VERSION}-${SHORT}" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          JARS="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources' || true)"
+          [ -n "$JARS" ] || JARS="build/libs/*.jar"
+          NOTES="$(printf '%s\n' \
+            "Automatic pre-release build." \
+            "" \
+            "- Branch: ${GITHUB_REF_NAME}" \
+            "- Commit: ${HEAD_SHA}" \
+            "- mod_version: ${MOD_VERSION}" \
+            "" \
+            "Published by the Publish Pre-Release workflow (every push to a version branch).")"
+          # shellcheck disable=SC2086
+          gh release create "${TAG}" ${JARS} \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --title "Pre-release ${MOD_VERSION} (${SHORT})" \
+            --notes "$NOTES" \
+            --target "$HEAD_SHA"
