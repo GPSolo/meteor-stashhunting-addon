@@ -4,7 +4,7 @@ import com.stash.hunt.modules.searcharea.SearchAreaMode;
 import com.stash.hunt.modules.searcharea.SearchAreaModes;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.util.math.BlockPos;
-
+import net.minecraft.util.math.Vec3d;
 import java.io.*;
 
 import static com.stash.hunt.Utils.*;
@@ -82,7 +82,7 @@ public class Spiral extends SearchAreaMode
             }
             else
             {
-                mc.player.setYaw((float) Rotations.getYaw(pd.currPos.toCenterPos()));
+                mc.player.setYaw((float) Rotations.getYaw(Vec3d.ofCenter(pd.currPos)));
                 setPressed(mc.options.forwardKey, true);
             }
             return;
