@@ -18,6 +18,10 @@
 #   push                    -> push the sync branch.
 #   pr                      -> push + open/refresh the PR (base: target).
 # The workflow default is `pr` so a dispatch produces reviewable PRs.
+#
+# matrix-prep: GitHub's expression language has NO string `replace` function,
+# so the comma-separated `version` input is split into a JSON array in a tiny
+# bash job (the standard GH pattern) and consumed via fromJSON in the matrix.
 # -----------------------------------------------------------------------------
 name: sync-qol
 
@@ -54,7 +58,19 @@ permissions:
   pull-requests: write
 
 jobs:
+  matrix-prep:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.split.outputs.targets }}
+    steps:
+      - id: split
+        run: |
+          V="${{ inputs.version }}"
+          V="$(printf '%s' "$V" | tr -d ' ' | tr ',' '\n' | sed 's/.*/"&"/' | paste -sd, -)"
+          echo "targets=[$V]" >> "$GITHUB_OUTPUT"
+
   sync:
+    needs: matrix-prep
     runs-on: ubuntu-latest
     # Job-level group: `matrix` is not available at workflow level, so a
     # top-level group would collapse every target into one serial queue.
@@ -66,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(format('["{0}"]', replace(replace(inputs.version, ' ', ''), ',', '","'))) }}
+        target: ${{ fromJSON(needs.matrix-prep.outputs.targets) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,7 +90,7 @@ jobs:
           ref: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ startsWith(matrix.target, '26.') && '25' || '21' }}
@@ -105,7 +121,7 @@ jobs:
 
       - name: Upload sync diagnostics (${{ matrix.target }})
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: sync-qol-${{ matrix.target }}
           path: |
