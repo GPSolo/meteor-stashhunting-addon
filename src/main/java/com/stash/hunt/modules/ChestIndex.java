@@ -15,34 +15,34 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockIterator;
+import meteordevelopment.meteorclient.utils.misc.Names;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.*;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.ChestBlock;
+import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
-
 import java.io.File;
 import java.io.FileWriter;
 import java.io.Writer;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import com.google.gson.JsonObject;
 import java.io.IOException;
 
 import com.google.gson.*;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
-
 
 import static meteordevelopment.meteorclient.utils.Utils.getItemsInContainerItem;
 import static meteordevelopment.meteorclient.utils.Utils.hasItems;
@@ -210,7 +210,7 @@ public class ChestIndex extends Module
                     Item item = Registries.ITEM.get(identifier);
 
                     // Get the display name (human-readable)
-                    String displayName = item.getName().getString();
+                    String displayName = Names.get(item);
                     json.add(displayName, new JsonPrimitive(entry.getValue()));
                 }
                 saveToJson(gson, "blocks_name", json);
@@ -235,7 +235,7 @@ public class ChestIndex extends Module
                     Item item = Registries.ITEM.get(identifier);
 
                     // Get the display name (human-readable)
-                    String displayName = item.getName().getString();
+                    String displayName = Names.get(item);
 
                     // Calculate stack size
                     int stackSize = item.getMaxCount();
@@ -268,7 +268,7 @@ public class ChestIndex extends Module
                         Item item = Registries.ITEM.get(identifier);
 
                         // Get the display name (human-readable)
-                        String displayName =item.getName().getString();
+                        String displayName = Names.get(item);
 
                         // Calculate stack size
                         int stackSize = item.getMaxCount();
