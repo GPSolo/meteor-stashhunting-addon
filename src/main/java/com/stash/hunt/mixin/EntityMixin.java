@@ -43,7 +43,7 @@ public class EntityMixin
         }
     }
 
-    @Inject(at = @At("HEAD"), method = "pushAwayFrom", cancellable = true)
+    @Inject(at = @At("HEAD"), method = "pushAwayFrom(Lnet/minecraft/entity/Entity;)V", cancellable = true)
     private void pushAwayFrom(Entity entity, CallbackInfo ci)
     {
         if (mc.player != null && this.uuid == mc.player.getUuid() && efly != null && efly.enabled() && !entity.getUuid().equals(this.uuid))

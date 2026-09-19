@@ -24,18 +24,17 @@ import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.MovementType;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.*;
+import net.minecraft.network.packet.c2s.play.ClickSlotC2SPacket;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.s2c.play.CloseScreenS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
-
-import com.stash.hunt.Addon;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.screen.sync.ItemStackHash;
 import net.minecraft.util.Identifier;
+import net.minecraft.screen.sync.ItemStackHash;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.screen.slot.SlotActionType;
+import com.stash.hunt.Addon;
 import java.util.List;
 
 import static com.stash.hunt.Utils.*;
@@ -425,7 +424,7 @@ public class ElytraFlyPlusPlus extends Module {
                 double currDistance = distance.get(); // Keep checking farther distances until a goal is found that has a block beneath it
 
                 if (portalTrap != null) {
-                    currDistance += mc.player.getPos().distanceTo(portalTrap.toCenterPos());
+                    currDistance += mc.player.getPos().distanceTo(Vec3d.ofCenter(portalTrap));
                     portalTrap = null;
                     info("Pathing around portal.");
                 }
@@ -439,12 +438,12 @@ public class ElytraFlyPlusPlus extends Module {
                         return;
                     }
                     Vec3d unitYawVec = yawToDirection(yaw.get());
-                    Vec3d travelVec = mc.player.getPos().subtract(startPos.get().toCenterPos());
+                    Vec3d travelVec = mc.player.getPos().subtract(Vec3d.ofCenter(startPos.get()));
 
                     double parallelCurrPosDot = travelVec.multiply(new Vec3d(1, 0, 1)).dotProduct(unitYawVec);
                     Vec3d parallelCurrPosComponent = unitYawVec.multiply(parallelCurrPosDot);
 
-                    Vec3d pos = startPos.get().toCenterPos().add(parallelCurrPosComponent);
+                    Vec3d pos = Vec3d.ofCenter(startPos.get()).add(parallelCurrPosComponent);
                     pos = positionInDirection(pos, yaw.get(), currDistance);
 
                     goal = new BlockPos((int)(Math.floor(pos.x)), targetY.get(), (int)Math.floor(pos.z));
