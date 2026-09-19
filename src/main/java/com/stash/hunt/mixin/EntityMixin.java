@@ -25,7 +25,7 @@ public class EntityMixin
     @Unique
     ElytraFlyPlusPlus efly = Modules.get().get(ElytraFlyPlusPlus.class);
 
-    @Inject(at = @At("HEAD"), method = "getPose()Lnet/minecraft/entity/EntityPose;", cancellable = true)
+    @Inject(at = @At("HEAD"), method = "getPose()Lnet/minecraft/world/entity/Pose;", cancellable = true)
     private void getPose(CallbackInfoReturnable<EntityPose> cir)
     {
         if (efly != null && efly.enabled() && this.uuid == mc.player.getUuid())
@@ -43,7 +43,7 @@ public class EntityMixin
         }
     }
 
-    @Inject(at = @At("HEAD"), method = "pushAwayFrom", cancellable = true)
+    @Inject(at = @At("HEAD"), method = "push(Lnet/minecraft/world/entity/Entity;)V", cancellable = true)
     private void pushAwayFrom(Entity entity, CallbackInfo ci)
     {
         if (mc.player != null && this.uuid == mc.player.getUuid() && efly != null && efly.enabled() && !entity.getUuid().equals(this.uuid))

@@ -19,7 +19,6 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket;
@@ -28,7 +27,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.chunk.Chunk;
-
 import java.io.*;
 import java.util.HashSet;
 
@@ -198,7 +196,7 @@ public class HighlightOldLava extends Module
     private void onRender(Render3DEvent event) {
         if ((logMode.get() == Mode.Highlight) || (logMode.get() == Mode.Both)) {
             for (BlockPos blockPos : oldLava) {
-                if (Math.sqrt(mc.player.squaredDistanceTo(blockPos.toCenterPos())) <= renderDistance.get()) {
+                if (Math.sqrt(mc.player.squaredDistanceTo(Vec3d.ofCenter(blockPos))) <= renderDistance.get()) {
                     RenderUtils.renderTickingBlock(blockPos.toImmutable(), sideColor.get(), lineColor.get(), shapeMode.get(), 0, 8, true, false);
                 }
             }
@@ -209,7 +207,7 @@ public class HighlightOldLava extends Module
     private void onChunkData(ChunkDataEvent event)
     {
         Chunk chunk = event.chunk();
-        Vec3d chunkPos = chunk.getPos().getStartPos().toCenterPos();
+        Vec3d chunkPos = Vec3d.ofCenter(chunk.getPos().getStartPos());
         // don't check chunks loaded by player
         if (loadedChunks.contains(chunkPos)) return;
         loadedChunks.add(chunkPos);
