@@ -7,7 +7,7 @@ WHAT IT DOES (ground-truthed across origin/26.2 <-> origin/1.21.1):
    (Phase 1 proved byte-exactness on 1.21.1 for all 7 files: raw loom output ==
    accepted port). So the code files themselves need NO help here.
 
-   But two *metadata* edits are not in any .java the loom consumes, and are
+   But three *metadata* edits are not in any .java the loom consumes, and are
    the exact spots that differ between the accepted 1.21.1 port and 26.2:
 
      1. MODULE REGISTRATION (Addon.java)
@@ -28,18 +28,24 @@ WHAT IT DOES (ground-truthed across origin/26.2 <-> origin/1.21.1):
            mixins.json client[] array if (and only if) they are missing.
         -> Idempotent: membership is checked before append.
 
+     3. MOJMAP TARGET build.gradle DEPENDENCY (26.1.2 / any unobfuscated
+        target). The loom merged game jar for the 26.x MC blob declares
+        `MinecraftServer implements net.fabricmc.fabric.api.resource.v1.
+        DataResourceStore`, so compiling ANY code that touches MinecraftServer
+        (the QoL serverKey() chain) requires that fabric interface on the
+        compile classpath. This script mirrors origin/26.2's exact
+        compileOnly fabric-resource-loader-v1 line into the mojmap target's
+        build.gradle (idempotent, verified). Yarn targets (1.21.x) are a
+        no-op: their merged jars do not implement the fabric interface.
+
    SAFETY INVARIANT (mirrors fixups.py):
      - `verify` mode is what the build gate runs: it asserts the registrations
        EXIST in the MIGRATED output (Addon.java must contain the TripResumer
-       registration AND mixins.json client[] must contain both mixin classes).
-       If either is missing the sync FAILS (exit 3) -- never silently ships a
-       port that would surface as "this intended QoL module isn't registered".
-     - Application is always performed BEFORE loom in the pipeline, because loom
-       is what remaps string tokens (mixin method=..., @Mixin targets) and we
-       want the strings that loom DOESN'T touch (mixin class names in
-       mixins.json; module class in Addon.java) to reflect the final manifest
-       while loom is the last mover. Ordering matters and Phase 1 validated that
-       ordering produces byte-exact output.
+       registration AND mixins.json client[] must contain both mixin classes;
+       mojmap targets must also carry the fabric-resource-loader compileOnly
+       line). If any is missing the sync FAILS -- never silently ships a port
+       that would surface as "this intended QoL module isn't registered" or
+       that cannot compile against the merged game jar's fabric interface.
 """
 import json
 import sys
@@ -61,6 +67,29 @@ MIXIN_CLASSES: List[str] = [
     "ChatComponentMixin",
     "ClientPacketListenerMixin",
 ]
+
+# ---------------------------------------------------------------------------
+# Mojmap-target build.gradle dependency (mirrors origin/26.2 build.gradle)
+# ---------------------------------------------------------------------------
+# The loom "merged" game jar for the 26.x MC blob (same merge hash
+# 1b9cc516b9 for 26.1.2 and 26.2) declares MinecraftServer as implementing
+# net.fabricmc.fabric.api.resource.v1.DataResourceStore. javac therefore
+# needs that interface on the compile classpath the moment any source touches
+# MinecraftServer (the QoL port's serverKey() calls
+# mc.getSingleplayerServer().getWorldData().getLevelName()). 26.2 pins the
+# interface compileOnly -- mirror its exact line here, idempotently.
+# Yarn-mapped targets (1.21.x) never get this: their merged jars do not carry
+# the fabric interface, and anything extra would be dead weight.
+MOJMAP_FABRIC_COMMENT = (
+    "// Fabric API resource loader (compile only - the merged game jar has "
+    "MinecraftServer implement DataResourceStore)"
+)
+MOJMAP_FABRIC_DEP = (
+    'compileOnly "net.fabricmc.fabric-api:fabric-resource-loader-v1:'
+    "2.0.13+9edec1269e\""
+)
+# Anchor line to insert after (present on every known branch's build.gradle).
+MOJMAP_DEP_ANCHOR = 'implementation "net.fabricmc:fabric-loader:${project.loader_version}"'
 
 
 def _find_addon_java(root: Path) -> Optional[Path]:
@@ -86,9 +115,10 @@ def _register_modules(addon: Path) -> int:
                   file=sys.stderr)
             return -1
         # Insert immediately after the anchor line, matching its indentation.
-        idx = text.find(anchor) + len(anchor)
+        idx = text.find(anchor)
         nl = text.index("\n", idx)
-        indent = text[idx:nl]  # keep everything between anchor-end and newline
+        line_start = text.rfind("\n", 0, idx) + 1
+        indent = text[line_start:idx]  # leading whitespace of the anchor line
         text = (text[:nl] + "\n" + indent + f"Modules.get().add(new {module_class}());"
                 + text[nl:])
         added += 1
@@ -106,10 +136,8 @@ def _register_mixins(mixins_json: Path) -> int:
         return -1
     added = 0
     for cls in MIXIN_CLASSES:
-        short = cls.replace("Mixin", "")  # stored as "ChatComponent"/"ClientPacketListener"?
-        # The manifest stores SHORT names (both 26.2 and 1.21.1 use short
-        # names: ChatComponentMixin is listed as "ChatComponentMixin"? -- see
-        # glossary; mixin files are ChatComponentMixin.java so short = same).
+        # mixins.json stores full class names (ChatComponentMixin, ...) -- both
+        # 26.2 and every yarn branch verified.
         if cls not in client:
             client.append(cls)
             added += 1
@@ -119,6 +147,38 @@ def _register_mixins(mixins_json: Path) -> int:
             json.dumps(data, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8")
     return added
+
+
+def _is_mojmap_target(branch_root: Path) -> bool:
+    """Unobfuscated/mojmap target == gradle.properties has NO yarn_mappings
+    (same rule sync-qol.sh uses to skip loom migrate)."""
+    gp = branch_root / "gradle.properties"
+    if gp.is_file():
+        for line in gp.read_text(encoding="utf-8").splitlines():
+            if line.startswith("yarn_mappings="):
+                return False
+    return True
+
+
+def _ensure_mojmap_dep(build_gradle: Path) -> int:
+    """Idempotently ensure the compileOnly fabric-resource-loader-v1 line (the
+    exact one 26.2's build.gradle pins) exists in a mojmap target's
+    build.gradle. Returns lines added (0 = already present), -1 on failure."""
+    text = build_gradle.read_text(encoding="utf-8")
+    if MOJMAP_FABRIC_DEP in text:
+        return 0
+    if MOJMAP_DEP_ANCHOR not in text:
+        print(f"[apply_manifest] mojmap dep anchor missing: {MOJMAP_DEP_ANCHOR!r} "
+              f"in {build_gradle}", file=sys.stderr)
+        return -1
+    idx = text.find(MOJMAP_DEP_ANCHOR)
+    nl = text.index("\n", idx)
+    line_start = text.rfind("\n", 0, idx) + 1
+    indent = text[line_start:idx]  # leading whitespace of the anchor line
+    insert = f"{indent}{MOJMAP_FABRIC_COMMENT}\n{indent}{MOJMAP_FABRIC_DEP}"
+    text = text[:nl] + "\n" + insert + text[nl:]
+    build_gradle.write_text(text, encoding="utf-8")
+    return 2  # comment + dep line
 
 
 def apply_manifest(branch_root: Path) -> Tuple[int, int]:
@@ -135,6 +195,13 @@ def apply_manifest(branch_root: Path) -> Tuple[int, int]:
             return (-1, 0)
         mixins.append(n)
     return (mods, sum(mixins))
+
+
+def apply_build_metadata(branch_root: Path) -> int:
+    """build.gradle edits for mojmap targets only (yarn targets: no-op)."""
+    if not _is_mojmap_target(branch_root):
+        return 0
+    return _ensure_mojmap_dep(branch_root / "build.gradle")
 
 
 def verify_manifest(branch_root: Path) -> int:
@@ -159,6 +226,13 @@ def verify_manifest(branch_root: Path) -> int:
                 print(f"[verify] {mj.name} missing mixin class {cls}",
                       file=sys.stderr)
                 problems += 1
+    if _is_mojmap_target(branch_root):
+        bg = branch_root / "build.gradle"
+        if not bg.is_file() or MOJMAP_FABRIC_DEP not in bg.read_text(encoding="utf-8"):
+            print("[verify] mojmap target build.gradle missing compileOnly "
+                  f"fabric-resource-loader-v1 ({MOJMAP_FABRIC_DEP!r})",
+                  file=sys.stderr)
+            problems += 1
     return 3 if problems else 0
 
 
@@ -174,5 +248,8 @@ if __name__ == "__main__":
     mods, mix = apply_manifest(root)
     if mods < 0:
         sys.exit(3)
-    print(f"[apply_manifest] modules +{mods}, mixins +{mix}",
+    bg = apply_build_metadata(root)
+    if bg < 0:
+        sys.exit(3)
+    print(f"[apply_manifest] modules +{mods}, mixins +{mix}, build.gradle +{bg}",
           file=sys.stderr)
