@@ -92,6 +92,17 @@ case "$delivery" in dry|push|pr) ;; *) die "unknown delivery '$delivery' (dry|pu
 cd "$REPO_ROOT"
 [ -n "$target" ] || target="$(git rev-parse --abbrev-ref HEAD)"
 
+# git identity: CI runners have no user.name/user.email configured, so
+# `git commit` dies with "Author identity unknown". Supply a bot identity via
+# GIT_AUTHOR_*/GIT_COMMITTER_* env ONLY when config is missing -- local
+# checkouts keep their own configured author.
+if ! git config user.name >/dev/null 2>&1 || ! git config user.email >/dev/null 2>&1; then
+  export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-github-actions[bot]}"
+  export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
+  export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+  export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+fi
+
 # ---------------------------------------------------------------------------
 # resolve source commit
 #   --source given? use it (branch, ref or sha) -- the workflow defaults this
