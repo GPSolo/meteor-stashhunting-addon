@@ -80,6 +80,7 @@ public class Addon extends MeteorAddon {
         if (baritoneLoaded)
         {
             Modules.get().add(new ElytraFlyPlusPlus());
+            Modules.get().add(new TripResumer());
         }
 
         Hud.get().register(Weather.INFO);
