@@ -109,7 +109,7 @@ public class TrailMaker extends Module
                 return;
             }
             ChunkPos goal = points.peek();
-            Vec3 centerBlockPos = goal.getMiddleBlockPosition((int) mc.player.getY()).getCenter();
+            Vec3 centerBlockPos = Vec3.atCenterOf(goal.getMiddleBlockPosition((int) mc.player.getY()));
 
             if (dimension.equals(Level.NETHER) && !mc.level.dimension().equals(Level.NETHER))
             {

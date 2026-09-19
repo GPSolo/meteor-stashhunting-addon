@@ -21,7 +21,6 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.HashedStack;
-import net.minecraft.network.protocol.game.*;
 import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
@@ -425,7 +424,7 @@ public class ElytraFlyPlusPlus extends Module {
                 double currDistance = distance.get(); // Keep checking farther distances until a goal is found that has a block beneath it
 
                 if (portalTrap != null) {
-                    currDistance += mc.player.position().distanceTo(portalTrap.getCenter());
+                    currDistance += mc.player.position().distanceTo(Vec3.atCenterOf(portalTrap));
                     portalTrap = null;
                     info("Pathing around portal.");
                 }
@@ -439,12 +438,12 @@ public class ElytraFlyPlusPlus extends Module {
                         return;
                     }
                     Vec3 unitYawVec = yawToDirection(yaw.get());
-                    Vec3 travelVec = mc.player.position().subtract(startPos.get().getCenter());
+                    Vec3 travelVec = mc.player.position().subtract(Vec3.atCenterOf(startPos.get()));
 
                     double parallelCurrPosDot = travelVec.multiply(new Vec3(1, 0, 1)).dot(unitYawVec);
                     Vec3 parallelCurrPosComponent = unitYawVec.scale(parallelCurrPosDot);
 
-                    Vec3 pos = startPos.get().getCenter().add(parallelCurrPosComponent);
+                    Vec3 pos = Vec3.atCenterOf(startPos.get()).add(parallelCurrPosComponent);
                     pos = positionInDirection(pos, yaw.get(), currDistance);
 
                     goal = new BlockPos((int)(Math.floor(pos.x)), targetY.get(), (int)Math.floor(pos.z));

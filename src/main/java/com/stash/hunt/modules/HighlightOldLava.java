@@ -196,7 +196,7 @@ public class HighlightOldLava extends Module
     private void onRender(Render3DEvent event) {
         if ((logMode.get() == Mode.Highlight) || (logMode.get() == Mode.Both)) {
             for (BlockPos blockPos : oldLava) {
-                if (Math.sqrt(mc.player.distanceToSqr(blockPos.getCenter())) <= renderDistance.get()) {
+                if (Math.sqrt(mc.player.distanceToSqr(Vec3.atCenterOf(blockPos))) <= renderDistance.get()) {
                     RenderUtils.renderTickingBlock(blockPos.immutable(), sideColor.get(), lineColor.get(), shapeMode.get(), 0, 8, true, false);
                 }
             }
@@ -207,7 +207,7 @@ public class HighlightOldLava extends Module
     private void onChunkData(ChunkDataEvent event)
     {
         ChunkAccess chunk = event.chunk();
-        Vec3 chunkPos = chunk.getPos().getWorldPosition().getCenter();
+        Vec3 chunkPos = Vec3.atCenterOf(chunk.getPos().getWorldPosition());
         // don't check chunks loaded by player
         if (loadedChunks.contains(chunkPos)) return;
         loadedChunks.add(chunkPos);
