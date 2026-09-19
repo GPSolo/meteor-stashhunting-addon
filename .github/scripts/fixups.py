@@ -135,14 +135,15 @@ DENYLIST = [
 
 EXTRA_DENYLIST: dict = {
     # legacy yarn (1.21.1): getSelectedSlot() is gone (field is the API);
-    # GameProfile must use the getName() getter. isFallFlying/getTopY are
-    # CORRECT here -- never banned. canHaveWeather() absent -> bedWorks() form.
-    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()"],
+    # GameProfile must use the getName() getter (id()/name() accessors do not
+    # exist). isFallFlying/getTopY are CORRECT here -- never banned.
+    # canHaveWeather() absent -> bedWorks() form.
+    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()"],
     # hybrid (1.21.4)/mid (1.21.5, 1.21.8): isFallFlying and no-arg getTopY()
     # are gone; getName() getter is the API; slot is still the field on 1.21.4
-    "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
-    "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
-    "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
+    "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()"],
+    "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()"],
+    "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()"],
     # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again -- .name() is
     # CORRECT here, getName() must NOT survive; canHaveWeather() still absent
     "1.21.10": ["isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "getGameProfile().getName()"],
@@ -184,6 +185,17 @@ COMMON_YARN_RULES: List[Tuple[str, str, bool]] = [
 # reverted to the mojmap-style public FIELD .name() -- no rule for those.
 GP_NAME_GETTER: List[Tuple[str, str, bool]] = [
     ("getGameProfile().name()", "getGameProfile().getName()", False),
+]
+
+# 26.2's GameProfile exposes id()/name() accessors (matching 1.21.10+ yarn);
+# the 1.21.1..1.21.8 yarn line only has getId()/getName(). loom cannot bridge
+# the rename (leftover .id()/.name() compile on 1.21.10+, fail elsewhere), so
+# the 1.21.1-1.21.8 slices rewrite them. Variable is `profile` at every known
+# site (DiscordNotifs); if a new file uses a different receiver the gate will
+# flag it and this rule gains another entry.
+PROFILE_ACCESSOR_RULES: List[Tuple[str, str, bool]] = [
+    ("profile.id()", "profile.getId()", False),
+    ("profile.name()", "profile.getName()", False),
 ]
 
 # Cross-VERSION source drift (26.2 mojmap names that MC/yarn renamed going
@@ -274,15 +286,15 @@ CAN_HAVE_WEATHER_RULE: List[Tuple[str, str, bool]] = [
 FIXUPS: dict = {
     # 1.21.1 (loom 1.8) -- byte-for-byte validated against the accepted port
     "1.21.1": COMMON_YARN_RULES + GP_NAME_GETTER + LEGACY_YARN_RULES
-              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+              + PROFILE_ACCESSOR_RULES + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.4 (loom 1.8): isGliding/getTopYInclusive, but slot is still a field
     "1.21.4": COMMON_YARN_RULES + GP_NAME_GETTER + MID_YARN_RULES
-              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+              + PROFILE_ACCESSOR_RULES + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.5/1.21.8 (loom 1.10/1.13): modern API (method-based slot)
     "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
-              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+              + PROFILE_ACCESSOR_RULES + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
-              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+              + PROFILE_ACCESSOR_RULES + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again (getName() is
     # gone) -- getName() -> .name() via GP_NAME_FIELD (reverse of the getter
     # rule used below 1.21.10); canHaveWeather still absent
