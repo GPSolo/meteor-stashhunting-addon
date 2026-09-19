@@ -127,20 +127,28 @@ DENYLIST = [
     "ClientCommandSource",
     "Blocks.CUT_COPPER.waxed()",
     "Blocks.COPPER_BLOCK.waxed()",
+    # 26.2 mojmap renamed ResourceLocation -> Identifier (loom 1.13 leaves the
+    # import unmigrated) and SoundInstance.getIdentifier() (yarn: getId()).
+    "import net.minecraft.resources.Identifier;",
+    "event.sound.getIdentifier()",
 ]
 
 EXTRA_DENYLIST: dict = {
     # legacy yarn (1.21.1): getSelectedSlot() is gone (field is the API);
     # GameProfile must use the getName() getter. isFallFlying/getTopY are
-    # CORRECT here -- never banned.
-    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()"],
+    # CORRECT here -- never banned. canHaveWeather() absent -> bedWorks() form.
+    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()"],
     # hybrid (1.21.4)/mid (1.21.5, 1.21.8): isFallFlying and no-arg getTopY()
     # are gone; getName() getter is the API; slot is still the field on 1.21.4
-    "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()"],
-    "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()"],
-    "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()"],
-    # late yarn (1.21.10+): GameProfile.name is a FIELD again -- .name() is
-    # CORRECT here and must NOT be banned; getSelectedSlot() method is the API
+    "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
+    "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
+    "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
+    # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again -- .name() is
+    # CORRECT here; canHaveWeather() still absent
+    "1.21.10": ["isFallFlying", "getTopY()", "mc.world.canHaveWeather()"],
+    # late yarn (1.21.11): GameProfile.name is a FIELD again -- .name() is
+    # CORRECT here and must NOT be banned; canHaveWeather() EXISTS here and
+    # must NOT be banned; getSelectedSlot() method is the API
     "*": ["isFallFlying", "getTopY()"],
 }
 
@@ -230,18 +238,44 @@ WHOLE_TREE_YARN_RULES: List[Tuple[str, str, bool]] = [
     ("import net.minecraft.world.inventory.ContainerInput;",
      "import net.minecraft.screen.slot.SlotActionType;", False),
     ("ContainerInput.SWAP", "SlotActionType.SWAP", False),
+    # 26.2 mojmap renamed ResourceLocation -> Identifier; loom 1.13 (1.21.8/
+    # 1.21.10) does not know `net.minecraft.resources.Identifier` as a source
+    # name, so the import survives unmigrated. loom 1.14.9 (1.21.11) remaps it
+    # itself -- the rule is an idempotent NO-OP there. The simple class name
+    # (Identifier) is identical in both mappings, so only the import line moves.
+    ("import net.minecraft.resources.Identifier;",
+     "import net.minecraft.util.Identifier;", False),
+    # 26.2 mojmap SoundInstance.getIdentifier() (yarn 1.21.x: getId());
+    # remapped by loom 1.14.9, left for 1.13 -- idempotent either way.
+    ("event.sound.getIdentifier()", "event.sound.getId()", False),
+]
+
+# ClientLevel.canHaveWeather() is a 26.2 call that yarn added partway through
+# the 1.21.x line: it EXISTS on 1.21.11 (the accepted port keeps it) but not on
+# 1.21.1..1.21.10 (accepted: getDimension().bedWorks()). Sliced, NOT global --
+# see the "*" (1.21.11) FIXUPS entry that deliberately omits this rule.
+CAN_HAVE_WEATHER_RULE: List[Tuple[str, str, bool]] = [
+    ("mc.world.canHaveWeather()", "mc.world.getDimension().bedWorks()", False),
 ]
 
 FIXUPS: dict = {
     # 1.21.1 (loom 1.8) -- byte-for-byte validated against the accepted port
-    "1.21.1": COMMON_YARN_RULES + GP_NAME_GETTER + LEGACY_YARN_RULES + WHOLE_TREE_YARN_RULES,
+    "1.21.1": COMMON_YARN_RULES + GP_NAME_GETTER + LEGACY_YARN_RULES
+              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.4 (loom 1.8): isGliding/getTopYInclusive, but slot is still a field
-    "1.21.4": COMMON_YARN_RULES + GP_NAME_GETTER + MID_YARN_RULES + WHOLE_TREE_YARN_RULES,
+    "1.21.4": COMMON_YARN_RULES + GP_NAME_GETTER + MID_YARN_RULES
+              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.5/1.21.8 (loom 1.10/1.13): modern API (method-based slot)
-    "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES + WHOLE_TREE_YARN_RULES,
-    "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES + WHOLE_TREE_YARN_RULES,
-    # 1.21.10/1.21.11 (loom 1.13/1.14.9): GameProfile.name is a FIELD again,
-    # so the getName() getter rule must NOT fire -- MODERN only
+    "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
+              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+    "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
+              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+    # 1.21.10 (loom 1.13): same modern slice; canHaveWeather still absent
+    "1.21.10": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
+               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+    # 1.21.11 (loom 1.14.9): GameProfile.name is a FIELD again, so the
+    # getName() getter rule must NOT fire; canHaveWeather() EXISTS here so the
+    # bedWorks() rule must NOT fire -- MODERN + WHOLE_TREE only
     "*": COMMON_YARN_RULES + MODERN_YARN_RULES + WHOLE_TREE_YARN_RULES,
 }
 
