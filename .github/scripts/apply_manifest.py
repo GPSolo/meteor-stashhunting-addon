@@ -151,7 +151,7 @@ def _register_mixins(mixins_json: Path) -> int:
 
 def _is_mojmap_target(branch_root: Path) -> bool:
     """Unobfuscated/mojmap target == gradle.properties has NO yarn_mappings
-    (same rule sync-qol.sh uses to skip loom migrate)."""
+    (same rule sync-base.sh uses to skip loom migrate)."""
     gp = branch_root / "gradle.properties"
     if gp.is_file():
         for line in gp.read_text(encoding="utf-8").splitlines():

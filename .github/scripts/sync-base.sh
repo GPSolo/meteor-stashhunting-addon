@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sync-qol.sh -- QoL feature-set synchronizer
+# sync-base.sh -- base-branch (QoL) feature-set synchronizer
 #
-# Ports the QoL feature set (the 7 files in qol-source.txt) from the source
+# Ports the base feature set (the 7 files in base-source.txt) from the source
 # branch (26.2 -- canonical, mojmap/unobfuscated) into a TARGET version branch
 # (yarn-mapped 1.21.x) via **that branch's own pinned loom migrateMappings**:
 #
 #   1. Create a per-sync branch from the target in a DEDICATED WORKTREE
-#      (qol-tmp/worktree), so run-to-run state can never leak between syncs:
-#        sync/qol-<source>-to-<target>
+#      (sync-tmp/worktree), so run-to-run state can never leak between syncs:
+#        sync/base-<source>-to-<target>
 #      The target branch itself is NEVER touched (delivery is PR-based).
 #
 #   2. Copy the 7 manifest files from the source commit. The source is written
@@ -68,6 +68,7 @@ source_ref=""
 target=""
 delivery=""
 loom_override=""
+pr_title=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -81,12 +82,14 @@ while [ "$#" -gt 0 ]; do
     --delivery)        delivery="$2"; shift 2 ;;
     --loom=*)          loom_override="${1#*=}"; shift ;;
     --loom)            loom_override="$2"; shift 2 ;;
+    --pr-title=*)      pr_title="${1#*=}"; shift ;;
+    --pr-title)        pr_title="$2"; shift 2 ;;
     *) die "unknown argument: $1" 2 ;;
   esac
 done
 
 [ -n "$source_branch" ] || source_branch="26.2"
-delivery="${delivery:-${QOL_DELIVERY:-dry}}"
+delivery="${delivery:-${SYNC_DELIVERY:-dry}}"
 case "$delivery" in dry|push|pr) ;; *) die "unknown delivery '$delivery' (dry|push|pr)" 2 ;; esac
 
 cd "$REPO_ROOT"
@@ -107,39 +110,39 @@ fi
 # resolve source commit
 #   --source given? use it (branch, ref or sha) -- the workflow defaults this
 #   to the LIVE origin/<source_branch> HEAD so new 26.2 commits propagate.
-#   otherwise: origin/<source_branch> HEAD; fallback to the qol-source.txt pin
+#   otherwise: origin/<source_branch> HEAD; fallback to the base-source.txt pin
 #   (validated baseline) if the live branch cannot be resolved.
 # ---------------------------------------------------------------------------
 pin="$(sed -nE 's/^# Last synced from: [^@]+ @ ([0-9a-f]{7,40}).*/\1/p' \
-  "$SCRIPT_DIR/qol-source.txt" | head -1)"
+  "$SCRIPT_DIR/base-source.txt" | head -1)"
 if [ -z "$source_ref" ]; then
   if git cat-file -e "origin/${source_branch}^{commit}" >/dev/null 2>&1; then
     source_ref="origin/${source_branch}"
   elif [ -n "$pin" ] && git cat-file -e "${pin}^{commit}" >/dev/null 2>&1; then
-    echo "[sync-qol] warning: origin/${source_branch} not found; using qol-source.txt pin ${pin:0:12}"
+    echo "[sync-base] warning: origin/${source_branch} not found; using base-source.txt pin ${pin:0:12}"
     source_ref="$pin"
   else
-    die "cannot resolve source: origin/${source_branch} not found and no valid pin in qol-source.txt"
+    die "cannot resolve source: origin/${source_branch} not found and no valid pin in base-source.txt"
   fi
 fi
 if ! git cat-file -e "${source_ref}^{commit}" >/dev/null 2>&1; then
   die "source ref not found: ${source_ref}"
 fi
 source_ref="$(git rev-parse --verify "${source_ref}^{commit}")"
-echo "[sync-qol] source: ${source_branch} @ ${source_ref:0:12} (baseline pin: ${pin:-none})"
-echo "[sync-qol] target: ${target} (branch: $(git rev-parse --abbrev-ref HEAD))"
+echo "[sync-base] source: ${source_branch} @ ${source_ref:0:12} (baseline pin: ${pin:-none})"
+echo "[sync-base] target: ${target} (branch: $(git rev-parse --abbrev-ref HEAD))"
 
 # ---------------------------------------------------------------------------
 # manifest (paths relative to src/main/java/com/stash/hunt/)
 # ---------------------------------------------------------------------------
-MANIFEST="$SCRIPT_DIR/qol-source.txt"
+MANIFEST="$SCRIPT_DIR/base-source.txt"
 [ -f "$MANIFEST" ] || die "missing manifest: $MANIFEST"
 mapfile -t MANIFEST_FILES < <(grep -vE '^\s*(#|$)' "$MANIFEST")
 [ "${#MANIFEST_FILES[@]}" -gt 0 ] || die "manifest is empty: $MANIFEST"
 
-sync_branch="sync/qol-${source_branch}-to-${target}"
-qol_tmp="$REPO_ROOT/qol-tmp"
-wt="$qol_tmp/worktree"
+sync_branch="sync/base-${source_branch}-to-${target}"
+sync_tmp="$REPO_ROOT/sync-tmp"
+wt="$sync_tmp/worktree"
 
 # ---------------------------------------------------------------------------
 # 1. dedicated WORKTREE at the target tip (the target branch itself stays
@@ -148,11 +151,11 @@ wt="$qol_tmp/worktree"
 #    one. The sync branch is force-created inside the worktree.)
 # ---------------------------------------------------------------------------
 git worktree remove --force "$wt" 2>/dev/null || true
-rm -rf "$qol_tmp"; mkdir -p "$qol_tmp"
+rm -rf "$sync_tmp"; mkdir -p "$sync_tmp"
 trap 'git worktree remove --force "$wt" 2>/dev/null || true' EXIT
 
 if git ls-remote --exit-code origin "refs/heads/$sync_branch" >/dev/null 2>&1; then
-  echo "[sync-qol] deleting stale remote ${sync_branch} (PR, if any, is refreshed on re-push)"
+  echo "[sync-base] deleting stale remote ${sync_branch} (PR, if any, is refreshed on re-push)"
   git push origin --delete "$sync_branch" >/dev/null 2>&1 || true
 fi
 git branch -D "$sync_branch" 2>/dev/null || true
@@ -179,10 +182,10 @@ fi
 if [ -n "$loom_override" ]; then loom="$loom_override"; fi
 is_mojmap=0
 [ -z "$yarn" ] && is_mojmap=1   # no yarn_mappings -> unobfuscated/mojmap target
-echo "[sync-qol] mc=${mc_version} loom=${loom:-<none>} yarn=${yarn:-<none/mojmap>} mojmap_target=$is_mojmap"
+echo "[sync-base] mc=${mc_version} loom=${loom:-<none>} yarn=${yarn:-<none/mojmap>} mojmap_target=$is_mojmap"
 
-import_dir="$qol_tmp/import/src/main/java"
-migrated_dir="$qol_tmp/migrated"
+import_dir="$sync_tmp/import/src/main/java"
+migrated_dir="$sync_tmp/migrated"
 mkdir -p "$import_dir" "$migrated_dir"
 
 # copy manifest files from source into the import tree (mojmap-written)
@@ -194,13 +197,13 @@ for f in "${MANIFEST_FILES[@]}"; do
   mkdir -p "$import_dir/com/stash/hunt/$(dirname "$f")"
   git show "${source_ref}:${src_path}" > "$import_dir/com/stash/hunt/${f}"
 done
-echo "[sync-qol] imported ${#MANIFEST_FILES[@]} manifest files from ${source_branch}"
+echo "[sync-base] imported ${#MANIFEST_FILES[@]} manifest files from ${source_branch}"
 
 # ---------------------------------------------------------------------------
 # 2+3. migrate + fixups (yarn targets only)
 # ---------------------------------------------------------------------------
 if [ "$is_mojmap" -eq 1 ]; then
-  echo "[sync-qol] mojmap/unobfuscated target: copying manifest verbatim (no loom migrate)"
+  echo "[sync-base] mojmap/unobfuscated target: copying manifest verbatim (no loom migrate)"
   for f in "${MANIFEST_FILES[@]}"; do
     cp "$import_dir/com/stash/hunt/${f}" "src/main/java/com/stash/hunt/${f}"
   done
@@ -209,21 +212,21 @@ else
   if ! grep -q 'mappings "net\.fabricmc:yarn:\${project\.yarn_mappings}:v2"' build.gradle; then
     die "unexpected mappings line shape in build.gradle (expected yarn \${project.yarn_mappings}) -- refusing to patch"
   fi
-  cp build.gradle "$qol_tmp/build.gradle.bak"
+  cp build.gradle "$sync_tmp/build.gradle.bak"
   sed -i 's#mappings "net\.fabricmc:yarn:\${project\.yarn_mappings}:v2"#mappings loom.officialMojangMappings()#' build.gradle
 
-  echo "[sync-qol] running loom migrateMappings (${loom}) mojmap -> yarn(${yarn})..."
+  echo "[sync-base] running loom migrateMappings (${loom}) mojmap -> yarn(${yarn})..."
   if ! ./gradlew --no-daemon --console=plain migrateMappings \
       --input "$import_dir" \
       --output "$migrated_dir" \
-      --mappings "$yarn" >"$qol_tmp/migrate.log" 2>&1; then
-    mv "$qol_tmp/build.gradle.bak" build.gradle
-    tail -n 60 "$qol_tmp/migrate.log" >&2
+      --mappings "$yarn" >"$sync_tmp/migrate.log" 2>&1; then
+    mv "$sync_tmp/build.gradle.bak" build.gradle
+    tail -n 60 "$sync_tmp/migrate.log" >&2
     die "loom migrateMappings FAILED (log tail above); build.gradle restored" 3
   fi
-  mv "$qol_tmp/build.gradle.bak" build.gradle
+  mv "$sync_tmp/build.gradle.bak" build.gradle
 
-  echo "[sync-qol] applying residual fixups..."
+  echo "[sync-base] applying residual fixups..."
   python3 "$SCRIPT_DIR/fixups.py" "$migrated_dir" "$mc_version" --fix \
     || die "fixups.py --fix failed" 3
   python3 "$SCRIPT_DIR/fixups.py" "$migrated_dir" "$mc_version" --verify \
@@ -234,7 +237,7 @@ else
     [ -f "$migrated_file" ] || die "migrateMappings produced no output for ${f}"
     cp "$migrated_file" "src/main/java/com/stash/hunt/${f}"
   done
-  echo "[sync-qol] migrated ${#MANIFEST_FILES[@]} files into src/"
+  echo "[sync-base] migrated ${#MANIFEST_FILES[@]} files into src/"
 fi
 
 # ---------------------------------------------------------------------------
@@ -248,12 +251,12 @@ python3 "$SCRIPT_DIR/apply_manifest.py" "$wt" verify \
 # ---------------------------------------------------------------------------
 # 5. build gate -- never ship without a green build
 # ---------------------------------------------------------------------------
-echo "[sync-qol] running build gate (./gradlew build)..."
-if ! ./gradlew --no-daemon --console=plain build >"$qol_tmp/gate.log" 2>&1; then
-  tail -n 60 "$qol_tmp/gate.log" >&2
+echo "[sync-base] running build gate (./gradlew build)..."
+if ! ./gradlew --no-daemon --console=plain build >"$sync_tmp/gate.log" 2>&1; then
+  tail -n 60 "$sync_tmp/gate.log" >&2
   die "build gate FAILED (see log tail)" 5
 fi
-echo "[sync-qol] build gate green"
+echo "[sync-base] build gate green"
 
 # ---------------------------------------------------------------------------
 # 6. delivery
@@ -267,7 +270,7 @@ if [ "$is_mojmap" -eq 1 ] && ! git diff --quiet -- build.gradle; then
   git add build.gradle
 fi
 if git diff --cached --quiet; then
-  echo "[sync-qol] nothing to commit -- already in sync -> exit 6"
+  echo "[sync-base] nothing to commit -- already in sync -> exit 6"
   exit 6
 fi
 
@@ -278,8 +281,9 @@ if [ -n "$base" ] && git cat-file -e "${base}^{commit}" >/dev/null 2>&1; then
 fi
 [ -n "$delta" ] || delta="(no new source commits since baseline ${base:-none}; initial/refresh port)"
 
-title="QoL sync: ${source_branch} -> ${target}"
-body="Automated QoL synchronization.
+title="Base sync: ${source_branch} -> ${target}"
+[ -n "$pr_title" ] && title="Base sync: ${pr_title} (${source_branch} -> ${target})"
+body="Automated base-branch synchronization.
 
 - Source: ${source_branch} @ ${source_ref:0:12}
 - Target: ${target}
@@ -291,18 +295,18 @@ ${delta}
 
 Please review: mixin \`@Inject(method=...)\` strings, chunk coordinate accessors and any API that changed between Minecraft versions. Resolve remaining porting issues manually, then merge."
 
-git commit -m "sync(qol): ${source_branch} -> ${target}" \
+git commit -m "sync(base): ${source_branch} -> ${target}" \
          -m "loom migrateMappings + residual fixups + manifest registration; build gate green." \
   >/dev/null
 
 case "$delivery" in
   dry)
-    echo "[sync-qol] DRY: committed locally on ${sync_branch}, NOT pushed."
+    echo "[sync-base] DRY: committed locally on ${sync_branch}, NOT pushed."
     git --no-pager diff --stat origin/"$target"...HEAD || true
     ;;
   push)
     git push --set-upstream origin "$sync_branch" || die "git push failed" 2
-    echo "[sync-qol] PUSHED ${sync_branch} (to be merged into ${target})"
+    echo "[sync-base] PUSHED ${sync_branch} (to be merged into ${target})"
     ;;
   pr)
     git push --set-upstream origin "$sync_branch" || die "git push failed" 2
@@ -312,9 +316,9 @@ case "$delivery" in
       if [ -z "$repo" ]; then die "cannot determine repo for gh" 2; fi
       existing="$(gh pr view "$sync_branch" --repo "$repo" --json url --jq .url 2>/dev/null || true)"
       if [ -n "$existing" ]; then
-        echo "[sync-qol] PR already open: ${existing}"
+        echo "[sync-base] PR already open: ${existing}"
         gh pr edit "$sync_branch" --repo "$repo" --title "$title" --body "$body" >/dev/null 2>&1 \
-          || echo "[sync-qol] warn: gh pr edit failed (PR still updated by push)"
+          || echo "[sync-base] warn: gh pr edit failed (PR still updated by push)"
       else
         gh pr create \
           --repo "$repo" \
@@ -325,9 +329,9 @@ case "$delivery" in
           || die "gh pr create failed" 2
       fi
     else
-      echo "[sync-qol] gh not available; pushed ${sync_branch}, open the PR manually"
+      echo "[sync-base] gh not available; pushed ${sync_branch}, open the PR manually"
     fi
     ;;
 esac
 
-echo "[sync-qol] ok: ${target} loom=${loom} delivery=${delivery}"
+echo "[sync-base] ok: ${target} loom=${loom} delivery=${delivery}"
