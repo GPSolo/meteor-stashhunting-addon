@@ -60,8 +60,15 @@ jobs:
             "" \
             "Promoted via the Publish Release workflow after pre-release testing.")"
           # shellcheck disable=SC2086
-          gh release create "${TAG}" ${JARS} \
+          if ! gh release create "${TAG}" ${JARS} \
             --repo "$GITHUB_REPOSITORY" \
             --title "jefff-mod ${MOD_VERSION}" \
             --notes "$NOTES" \
-            --target "$HEAD_SHA"
+            --target "$HEAD_SHA"; then
+            if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Note: release ${TAG} already exists -- nothing to do."
+            else
+              echo "gh release create failed for ${TAG} and the release does not exist; failing step." >&2
+              exit 1
+            fi
+          fi
