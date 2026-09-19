@@ -8,6 +8,9 @@
 # jar for every supported version (each run replaces only its own branch's jar),
 # is marked prerelease and never Latest, so testers always have fresh jars while
 # the Releases page stays clean until an explicit stable release (release.yml).
+# Assets are renamed to jefff-mod-<channel-version>-<branch>-<commit-sha>.jar
+# (e.g. jefff-mod-0.16.9-26.2-abc1234.jar) so each jar identifies the channel
+# version, MC/version branch, and exact commit it was built from.
 #
 # The channel is deliberately labeled with the NEXT version after the current
 # stable (0.16.8) -- bump CHANNEL_VERSION below when cutting each release.
@@ -64,8 +67,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          JARS="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources' || true)"
-          [ -n "$JARS" ] || { echo "no jars found in build/libs" >&2; exit 1; }
+          # Rename the built jar so the asset identifies the channel version,
+          # the MC/version branch, and the commit:
+          #   jefff-mod-0.16.9-26.2-abc1234.jar
+          J="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources' | head -1)"
+          [ -n "$J" ] || { echo "no jars found in build/libs" >&2; exit 1; }
+          ASSET="jefff-mod-${CHANNEL_VERSION}-${GITHUB_REF_NAME}-${SHORT}.jar"
+          cp "$J" "build/libs/$ASSET"
           NOTES="$(printf '%s\n' \
             "Latest test build for every supported version (one jar per branch)." \
             "" \
@@ -74,25 +82,27 @@ jobs:
             "- mod_version: ${MOD_VERSION}" \
             "- Channel: ${TAG}" \
             "" \
+            "Asset naming: jefff-mod-<channel-version>-<branch>-<commit>.jar" \
+            "" \
             "Pre-release only, for testing. Stable releases are published via the Publish Release workflow.")"
           replace_own_jars() {
-            # Replace only the jars belonging to THIS branch; other branches'
-            # jars stay in the shared channel. Jar names end in -<branch>.jar.
+            # Replace every jar THIS branch ever uploaded (old style
+            # jefff-mod-...-<branch>.jar or new style ...-<branch>-<sha>.jar).
+            # The regex anchors the branch token with a '-' so 1.21.1 never
+            # deletes 1.21.10/1.21.11 assets.
             for asset in $(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
-              case "$asset" in
-                jefff-mod-*-"${GITHUB_REF_NAME}".jar)
-                  gh release delete-asset "${TAG}" "$asset" --repo "$GITHUB_REPOSITORY" --yes ;;
-              esac
+              if printf '%s\n' "$asset" | grep -qE "^jefff-mod-.*-${GITHUB_REF_NAME}(-[0-9a-f]+)?\.jar$"; then
+                gh release delete-asset "${TAG}" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+              fi
             done
-            # shellcheck disable=SC2086
-            gh release upload "${TAG}" ${JARS} --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "${TAG}" "build/libs/$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" \
               --title "Pre-release ${CHANNEL_VERSION}" \
               --notes "$NOTES"
           }
           if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             replace_own_jars
-          elif ! gh release create "${TAG}" ${JARS} \
+          elif ! gh release create "${TAG}" "build/libs/$ASSET" \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --title "Pre-release ${CHANNEL_VERSION}" \
