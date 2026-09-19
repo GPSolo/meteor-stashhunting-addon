@@ -31,3 +31,15 @@ bin/
 # fabric
 
 run/
+
+# sync tooling scratch (worktree + import/migrate staging)
+
+qol-tmp/
+
+# eclipse (bt)
+
+.factorypath
+
+# python (tooling bytecode cache)
+
+__pycache__/
