@@ -51,13 +51,14 @@ jobs:
         run: |
           JARS="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources' || true)"
           [ -n "$JARS" ] || JARS="build/libs/*.jar"
-          NOTES="Stable release.
-
-- Branch: ${{ inputs.branch || '26.2' }}
-- Commit: ${HEAD_SHA}
-- mod_version: ${MOD_VERSION}
-
-Promoted via the Publish Release workflow after pre-release testing."
+          NOTES="$(printf '%s\n' \
+            "Stable release." \
+            "" \
+            "- Branch: ${{ inputs.branch || '26.2' }}" \
+            "- Commit: ${HEAD_SHA}" \
+            "- mod_version: ${MOD_VERSION}" \
+            "" \
+            "Promoted via the Publish Release workflow after pre-release testing.")"
           # shellcheck disable=SC2086
           gh release create "${TAG}" ${JARS} \
             --repo "$GITHUB_REPOSITORY" \

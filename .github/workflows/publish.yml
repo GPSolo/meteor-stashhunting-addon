@@ -58,13 +58,14 @@ jobs:
         run: |
           JARS="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources' || true)"
           [ -n "$JARS" ] || JARS="build/libs/*.jar"
-          NOTES="Automatic pre-release build.
-
-- Branch: ${GITHUB_REF_NAME}
-- Commit: ${HEAD_SHA}
-- mod_version: ${MOD_VERSION}
-
-Published by the Publish Pre-Release workflow (every push to a version branch)."
+          NOTES="$(printf '%s\n' \
+            "Automatic pre-release build." \
+            "" \
+            "- Branch: ${GITHUB_REF_NAME}" \
+            "- Commit: ${HEAD_SHA}" \
+            "- mod_version: ${MOD_VERSION}" \
+            "" \
+            "Published by the Publish Pre-Release workflow (every push to a version branch).")"
           # shellcheck disable=SC2086
           gh release create "${TAG}" ${JARS} \
             --repo "$GITHUB_REPOSITORY" \
