@@ -144,7 +144,7 @@ EXTRA_DENYLIST: dict = {
     # canHaveWeather() absent -> bedWorks() form. Pre-Builder meteor-client:
     # MeteorToast.Builder must not survive (constructor form is the API).
     # HashedStack does not exist in these yarns (whole-block rewrite).
-    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "HashedStack"],
+    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "HashedStack", "meteor$setY", "setSelectedSlot(", ".getValue(identifier)"],
     # hybrid (1.21.4)/mid (1.21.5, 1.21.8): isFallFlying and no-arg getTopY()
     # are gone; getName() getter is the API; slot is still the field on 1.21.4
     "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "HashedStack"],
@@ -310,10 +310,20 @@ CAN_HAVE_WEATHER_RULE: List[Tuple[str, str, bool]] = [
 ]
 
 FIXUPS: dict = {
-    # 1.21.1 (loom 1.8) -- byte-for-byte validated against the accepted port
+    # 1.21.1 (loom 1.8) -- byte-for-byte validated against the accepted port.
+    # Additional 1.21.1-only drift loom 1.8 cannot bridge (1.21.4+ remaps or
+    # API-matches): meteor$setY() prefix (old meteor-client: plain setY(0.0)),
+    # PlayerInventory setSelectedSlot() METHOD (1.21.1: public field write),
+    # Registries.ITEM.getValue() (1.21.1: .get()).
     "1.21.1": COMMON_YARN_RULES + GP_NAME_GETTER + LEGACY_YARN_RULES
               + PROFILE_ACCESSOR_RULES + METEOR_TOAST_CTOR_RULES
-              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
+              + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE
+              + [("((IVec3d) event.movement).meteor$setY(0);",
+                  "((IVec3d) event.movement).setY(0.0);", False),
+                 ("mc.player.getInventory().setSelectedSlot(i);",
+                  "mc.player.getInventory().selectedSlot = i;", False),
+                 ("Registries.ITEM.getValue(identifier)",
+                  "Registries.ITEM.get(identifier)", False)],
     # 1.21.4 (loom 1.8): isGliding/getTopYInclusive, but slot is still a field
     "1.21.4": COMMON_YARN_RULES + GP_NAME_GETTER + MID_YARN_RULES
               + PROFILE_ACCESSOR_RULES + METEOR_TOAST_CTOR_RULES
