@@ -1,13 +1,17 @@
-# publish.yml -- pre-release per commit (GPSolo/meteor-stashhunting-addon).
+# publish.yml -- single pre-release channel for testing (GPSolo/meteor-stashhunting-addon).
 # -----------------------------------------------------------------------------
-# Replaces the template dev_build.yml (which overwrote a single tag on every
-# push and re-marked it Latest on the releases page).
+# Replaces the template dev_build.yml (which overwrote one tag on every push and
+# re-marked it Latest) and the per-commit pre-release model (releases page fill-up).
 #
-# Every push to a VERSION branch builds and publishes a UNIQUE pre-release
-# tagged <mod_version>-<short-sha> (prerelease, never Latest), so testers
-# always get the newest jar while the Releases list stays clean until an
-# explicit stable release (release.yml). Sync branches (sync/base-*) are
-# never pushed by hand and are not in the branch list, so they never publish.
+# Every push to a VERSION branch builds and updates ONE pre-release channel,
+# tagged v<next-version>-pre (here: v0.16.9-pre). The channel holds the latest
+# jar for every supported version (each run replaces only its own branch's jar),
+# is marked prerelease and never Latest, so testers always have fresh jars while
+# the Releases page stays clean until an explicit stable release (release.yml).
+#
+# The channel is deliberately labeled with the NEXT version after the current
+# stable (0.16.8) -- bump CHANNEL_VERSION below when cutting each release.
+# mod_version itself is NOT touched; jar names keep reflecting the real version.
 # -----------------------------------------------------------------------------
 name: Publish Pre-Release
 
@@ -44,39 +48,57 @@ jobs:
         run: ./gradlew build
 
       - name: Version + tag
+        # CHANNEL_VERSION = the next version after the current stable release.
+        # Bump it when cutting each release (does NOT change mod_version).
         run: |
+          CHANNEL_VERSION="0.16.9"
           MOD_VERSION="$(sed -n 's/^mod_version=//p' gradle.properties)"
           SHORT="$(git rev-parse --short HEAD)"
+          echo "CHANNEL_VERSION=$CHANNEL_VERSION" >> "$GITHUB_ENV"
           echo "MOD_VERSION=$MOD_VERSION" >> "$GITHUB_ENV"
           echo "SHORT=$SHORT" >> "$GITHUB_ENV"
-          echo "TAG=${MOD_VERSION}-${SHORT}" >> "$GITHUB_ENV"
+          echo "TAG=v${CHANNEL_VERSION}-pre" >> "$GITHUB_ENV"
           echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      - name: Publish pre-release
+      - name: Publish pre-release channel
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           JARS="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources' || true)"
-          [ -n "$JARS" ] || JARS="build/libs/*.jar"
+          [ -n "$JARS" ] || { echo "no jars found in build/libs" >&2; exit 1; }
           NOTES="$(printf '%s\n' \
-            "Automatic pre-release build." \
+            "Latest test build for every supported version (one jar per branch)." \
             "" \
             "- Branch: ${GITHUB_REF_NAME}" \
-            "- Commit: ${HEAD_SHA}" \
+            "- Commit: ${HEAD_SHA} (${SHORT})" \
             "- mod_version: ${MOD_VERSION}" \
+            "- Channel: ${TAG}" \
             "" \
-            "Published by the Publish Pre-Release workflow (every push to a version branch).")"
-          # shellcheck disable=SC2086
-          if ! gh release create "${TAG}" ${JARS} \
+            "Pre-release only, for testing. Stable releases are published via the Publish Release workflow.")"
+          replace_own_jars() {
+            # Replace only the jars belonging to THIS branch; other branches'
+            # jars stay in the shared channel. Jar names end in -<branch>.jar.
+            for asset in $(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
+              case "$asset" in
+                jefff-mod-*-"${GITHUB_REF_NAME}".jar)
+                  gh release delete-asset "${TAG}" "$asset" --repo "$GITHUB_REPOSITORY" --yes ;;
+              esac
+            done
+            # shellcheck disable=SC2086
+            gh release upload "${TAG}" ${JARS} --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" \
+              --title "Pre-release ${CHANNEL_VERSION}" \
+              --notes "$NOTES"
+          }
+          if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            replace_own_jars
+          elif ! gh release create "${TAG}" ${JARS} \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
-            --title "Pre-release ${MOD_VERSION} (${SHORT})" \
+            --title "Pre-release ${CHANNEL_VERSION}" \
             --notes "$NOTES" \
             --target "$HEAD_SHA"; then
-            if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "Note: release ${TAG} already exists (e.g. manual dispatch raced a push) -- nothing to do."
-            else
-              echo "gh release create failed for ${TAG} and the release does not exist; failing step." >&2
-              exit 1
-            fi
+            # Raced another branch's run that created the channel first.
+            sleep 2
+            replace_own_jars
           fi
