@@ -10,6 +10,7 @@ import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
+import net.minecraft.world.phys.Vec3;
 import java.io.*;
 
 import static meteordevelopment.meteorclient.utils.player.ChatUtils.info;
@@ -90,7 +91,7 @@ public class Rectangle extends SearchAreaMode
             }
             else
             {
-                mc.player.setYRot((float) Rotations.getYaw(pd.currPos.getCenter()));
+                mc.player.setYRot((float) Rotations.getYaw(Vec3.atCenterOf(pd.currPos)));
                 setPressed(mc.options.keyUp, true);
             }
             return;
