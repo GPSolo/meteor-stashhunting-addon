@@ -40,6 +40,8 @@ dependencies {
     // Fabric
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    // Fabric API resource loader (compile only - the merged game jar has MinecraftServer implement DataResourceStore)
+    compileOnly "net.fabricmc.fabric-api:fabric-resource-loader-v1:2.0.13+9edec1269e"
 
     // Meteor
     implementation "meteordevelopment:meteor-client:${project.meteor_version}"
