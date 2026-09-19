@@ -9,7 +9,6 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
-
 import java.util.*;
 
 public class EntityList extends HudElement {
