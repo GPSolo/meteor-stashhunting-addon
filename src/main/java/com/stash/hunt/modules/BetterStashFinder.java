@@ -9,8 +9,23 @@ import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
+import net.minecraft.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.block.entity.BarrelBlockEntity;
+import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.block.entity.BlockEntityType;
+import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.CrafterBlockEntity;
+import net.minecraft.block.entity.DispenserBlockEntity;
+import net.minecraft.block.entity.EnderChestBlockEntity;
+import net.minecraft.block.entity.HopperBlockEntity;
+import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.client.gui.screen.DeathScreen;
+import net.minecraft.item.Items;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.World;
 import xaero.common.minimap.waypoints.Waypoint;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -25,12 +40,6 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.MeteorToast;
-import net.minecraft.block.entity.*;
-import net.minecraft.item.Items;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.World;
 import xaero.hud.minimap.BuiltInHudModules;
 import xaero.hud.minimap.module.MinimapSession;
 import xaero.hud.minimap.waypoint.set.WaypointSet;
@@ -263,10 +272,14 @@ public class BetterStashFinder extends Module
                     switch (notificationMode.get())
                     {
                         case Chat -> info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
-                        case Toast -> mc.getToastManager().add(new MeteorToast(Items.CHEST, title, "Found Stash!"));
+                        case Toast -> {
+                            MeteorToast toast = new MeteorToast(Items.CHEST, title, "Found Stash!");
+                            mc.getToastManager().add(toast);
+                        }
                         case Both -> {
                             info("Found stash at (highlight)%s(default), (highlight)%s(default).", chunk.x, chunk.z);
-                            mc.getToastManager().add(new MeteorToast(Items.CHEST, title, "Found Stash!"));
+                            MeteorToast toast = new MeteorToast(Items.CHEST, title, "Found Stash!");
+                            mc.getToastManager().add(toast);
                         }
                     }
                 }
