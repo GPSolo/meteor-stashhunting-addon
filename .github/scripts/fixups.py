@@ -38,6 +38,24 @@ MOJMAP TARGETS (26.x -- verbatim copy, no loom):
    rule's `old` token survives anywhere (i.e. every known drift spot was
    rewritten).
 
+WHOLE-TREE YARN DRIFT (MC API moved between 26.2 and the 1.21.x yarns -- loom
+   cannot translate these, they never existed in the target's mappings:
+     - 26.x moved screen handling (screen()/setScreen()/toastManager()) from
+       MinecraftClient onto Gui/InGameHud; 1.21.x keeps it on Minecraft
+       (currentScreen / setScreen / getToastManager().add()).
+     - 26.x Block builder-chains (waxed()/oxidized()/unaffected()) are plain
+       block constants on 1.21.x (WAXED_*).
+     - meteor-client renamed its IVec3 mixin interface to IVec3d.
+     - 26.x mojmap renamed ClickType -> ContainerInput; 1.21.x yarn still uses
+       SlotActionType.
+     - meteor-client's Command.build() generic: 26.2 (mojmap) uses
+       ClientSuggestionProvider; every 1.21.x yarn uses CommandSource. loom
+       maps the import to net.minecraft.client.network.ClientCommandSource,
+       which does NOT satisfy the superclass override -- so CommandExample is
+       fixed file-scoped (FILE_RULES), not globally.
+   Every rule is an IDEMPOTENT NO-OP on already-correct text; all six yarn
+   branches share one rule set (verified against every branch's accepted port).
+
 YARN VERSION SLICES (cross-VERSION drift -- loom cannot translate these even
    in principle, because the names never existed in the target's mappings):
      1.21.1   : isFallFlying(), World.getTopY(), getBottomY(),
@@ -94,6 +112,21 @@ DENYLIST = [
     "mc.level.getMinY()",
     "mc.level.getMaxY()",
     "AttributeModifierSlot.ARMOR",
+    # Whole-tree yarn drift (26.2 API moved; covered by WHOLE_TREE_YARN_RULES --
+    # surviving them means a NEW drift site appeared and needs a rule, NOT a
+    # loom bump): screen/toasts live on 26.x's Gui (yarn: mc.inGameHud), the
+    # Block builder-chains, meteor-client IVec3->IVec3d, ClickType->
+    # ContainerInput rename, and the Command.build() generic mismatch that
+    # loom maps to the wrong yarn class.
+    "mc.inGameHud.screen()",
+    "mc.inGameHud.setScreen(",
+    "mc.inGameHud.toastManager()",
+    "ContainerInput",
+    "meteordevelopment.meteorclient.mixininterface.IVec3;",
+    "((IVec3) event.movement)",
+    "ClientCommandSource",
+    "Blocks.CUT_COPPER.waxed()",
+    "Blocks.COPPER_BLOCK.waxed()",
 ]
 
 EXTRA_DENYLIST: dict = {
@@ -174,17 +207,42 @@ MODERN_YARN_RULES: List[Tuple[str, str, bool]] = [   # 1.21.5/1.21.8/1.21.10/1.2
     # getSelectedSlot() METHOD exists (field turned private) -- no rule
 ]
 
+# Cross-VERSION drift that is IDENTICAL on every yarn branch (see module doc
+# "WHOLE-TREE YARN DRIFT"): the 26.2 API moved/renamed in ways loom cannot
+# bridge, and all six 1.21.x branches share the same accepted form.
+WHOLE_TREE_YARN_RULES: List[Tuple[str, str, bool]] = [
+    # 26.x Gui (yarn: mc.inGameHud) owns screen/toasts; 1.21.x Minecraft does.
+    ("mc.inGameHud.screen() instanceof", "mc.currentScreen instanceof", False),
+    ("mc.inGameHud.setScreen(", "mc.setScreen(", False),
+    ("mc.inGameHud.toastManager().addToast(", "mc.getToastManager().add(", False),
+    # 26.2 Block builder-chains -> plain block constants on 1.21.x
+    ("Blocks.CUT_COPPER.waxed().oxidized()", "Blocks.WAXED_OXIDIZED_CUT_COPPER", False),
+    ("Blocks.COPPER_BLOCK.waxed().unaffected()", "Blocks.WAXED_COPPER_BLOCK", False),
+    ("Blocks.COPPER_BLOCK.waxed().oxidized()", "Blocks.WAXED_OXIDIZED_COPPER", False),
+    # meteor-client mixin interface rename IVec3 -> IVec3d (26.2 -> yarn deps);
+    # the import + the cast site are distinct strings, so these are safe
+    # without word-boundary regex.
+    ("import meteordevelopment.meteorclient.mixininterface.IVec3;",
+     "import meteordevelopment.meteorclient.mixininterface.IVec3d;", False),
+    ("((IVec3) event.movement)", "((IVec3d) event.movement)", False),
+    # 26.x mojmap renamed ClickType -> ContainerInput; 1.21.x yarn kept
+    # SlotActionType (loom cannot bridge the rename).
+    ("import net.minecraft.world.inventory.ContainerInput;",
+     "import net.minecraft.screen.slot.SlotActionType;", False),
+    ("ContainerInput.SWAP", "SlotActionType.SWAP", False),
+]
+
 FIXUPS: dict = {
     # 1.21.1 (loom 1.8) -- byte-for-byte validated against the accepted port
-    "1.21.1": COMMON_YARN_RULES + GP_NAME_GETTER + LEGACY_YARN_RULES,
+    "1.21.1": COMMON_YARN_RULES + GP_NAME_GETTER + LEGACY_YARN_RULES + WHOLE_TREE_YARN_RULES,
     # 1.21.4 (loom 1.8): isGliding/getTopYInclusive, but slot is still a field
-    "1.21.4": COMMON_YARN_RULES + GP_NAME_GETTER + MID_YARN_RULES,
+    "1.21.4": COMMON_YARN_RULES + GP_NAME_GETTER + MID_YARN_RULES + WHOLE_TREE_YARN_RULES,
     # 1.21.5/1.21.8 (loom 1.10/1.13): modern API (method-based slot)
-    "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES,
-    "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES,
+    "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES + WHOLE_TREE_YARN_RULES,
+    "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES + WHOLE_TREE_YARN_RULES,
     # 1.21.10/1.21.11 (loom 1.13/1.14.9): GameProfile.name is a FIELD again,
     # so the getName() getter rule must NOT fire -- MODERN only
-    "*": COMMON_YARN_RULES + MODERN_YARN_RULES,
+    "*": COMMON_YARN_RULES + MODERN_YARN_RULES + WHOLE_TREE_YARN_RULES,
 }
 
 # ---------------------------------------------------------------------------
@@ -240,6 +298,17 @@ FILE_RULES: dict = {
     "com/stash/hunt/modules/TrailMaker.java": [
         ("removeHighlight(point.x(), point.z(), dimension)",
          "removeHighlight(point.x, point.z, dimension)", False),
+    ],
+    # meteor-client Command.build() generic mismatch (see WHOLE-TREE YARN DRIFT
+    # in the module doc): loom maps net.minecraft.commands.CommandSource to
+    # net.minecraft.client.network.ClientCommandSource, but the yarn superclass
+    # requires net.minecraft.command.CommandSource. File-scoped because the
+    # replacement must NOT touch the brigadier LiteralArgumentBuilder generic.
+    "com/stash/hunt/commands/CommandExample.java": [
+        ("import net.minecraft.client.network.ClientCommandSource;",
+         "import net.minecraft.command.CommandSource;", False),
+        ("build(LiteralArgumentBuilder<ClientCommandSource>",
+         "build(LiteralArgumentBuilder<CommandSource>", False),
     ],
 }
 
