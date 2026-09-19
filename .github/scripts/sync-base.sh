@@ -42,23 +42,34 @@
 #                          DataResourceStore note). Addon.java module
 #                          registration arrives with the synced source itself.
 #
-#   5. GATE: ./gradlew build -- the same gate CI runs. If it fails, nothing is
-#      pushed and the run exits non-zero.
+#   5. GATE: ./gradlew build -- the same gate CI runs.
 #
-#   6. DELIVERY:
+#   6. DELIVERY (runs on green AND on recoverable gate failures):
 #        dry (default) -> commit on the sync branch locally, NO push.
 #        push          -> commit + push the sync branch.
 #        pr            -> commit + push sync branch + open/refresh the PR
 #                         (base = target branch, head = sync branch).
+#      DELIVER-ON-FAILURE: if fixups --verify (step 3) or the build gate
+#      (step 5) fails, the migrated tree is STILL committed and delivered as a
+#      PR, marked with the failing check in the body plus a log excerpt, so
+#      remaining port issues can be fixed directly on the sync branch instead
+#      of re-engineering the pipeline. The run still exits non-zero (red).
+#      A fixups --verify failure also skips the build gate (the verify failure
+#      IS the root cause; the run delivers the tree and exits 3).
+#      Stages that cannot produce a reviewable tree remain hard stops with NO
+#      PR: migrateMappings crashing (no migrated output) and apply_manifest.py
+#      failing (metadata registration broken -- rerun after fixing).
 #
 # EXIT CODES:
 #   0  success (migrate + fixups + manifest + gate all green, delivered)
-#   2  usage / missing tool / bad ref
-#   3  migrateMappings failed or fixups --verify found surviving mojmap tokens
-#      (loom generation gap; fix by bumping THIS branch's loom -- never by
-#      widening fixups rules to swallow mojmap output)
-#   4  manifest application/verification failed
-#   5  build gate failed
+#   2  usage / missing tool / bad ref / push or gh pr failed
+#   3  migrateMappings crashed (no tree -> no PR) OR fixups --verify found
+#      surviving mojmap tokens (the tree IS delivered as a failure-marked PR;
+#      fix by bumping THIS branch's loom or adding a rule - never by widening
+#      rules to swallow mojmap output)
+#   4  manifest application/verification failed (no PR)
+#   5  build gate failed (tree IS delivered as a failure-marked PR for manual
+#      port fixes)
 #   6  no changes (already in sync -- normal no-op)
 # =============================================================================
 set -euo pipefail
@@ -207,14 +218,158 @@ done
 echo "[sync-base] imported ${#SRC_FILES[@]} files (whole $SRC_TREE) from ${source_branch}"
 
 # ---------------------------------------------------------------------------
+# DELIVERY -- commit + push + open/refresh the PR. Shared by the green path
+# and the deliver-on-failure path, so a broken build / surviving mojmap token
+# still produces a reviewable PR (remaining port issues get fixed on the sync
+# branch instead of blocking the pipeline). The run still exits non-zero when
+# a gate failed, and the PR body carries the failure status + log excerpt.
+#   $1 commit note (second commit paragraph)
+#   $2 PR body status line, e.g. "OK - build gate green" / "BUILD GATE FAILED"
+#   $3 extra PR body section with failure details (empty when green)
+#   $4 exit code to return after delivering (0 = green)
+# ---------------------------------------------------------------------------
+deliver_changes() {
+  local commit_note="$1" status_line="$2" failure_details="$3" rc="$4"
+  git add -A -- src
+  # mojmap targets: apply_manifest.py also edits build.gradle (mirrors 26.2's
+  # compileOnly fabric-resource-loader-v1 -- the 26.x merged game jar declares
+  # MinecraftServer implements that fabric interface). Stage it so the PR
+  # carries the change; yarn targets never diff build.gradle here.
+  if [ "$is_mojmap" -eq 1 ] && ! git diff --quiet -- build.gradle; then
+    git add build.gradle
+  fi
+  if git diff --cached --quiet; then
+    if [ "$rc" -ne 0 ]; then
+      echo "[sync-base] nothing to commit on a FAILED run; exiting $rc without delivery"
+      exit "$rc"
+    fi
+    echo "[sync-base] nothing to commit -- already in sync -> exit 6"
+    exit 6
+  fi
+
+  base="$(sed -nE 's/^# Last synced from: [^@]+ @ ([0-9a-f]+).*/\1/p' "$MANIFEST" | head -1 || true)"
+  delta=""
+  if [ -n "$base" ] && git cat-file -e "${base}^{commit}" >/dev/null 2>&1; then
+    delta="$(git log --oneline --no-merges "${base}..${source_ref}" -- "$SRC_TREE" 2>/dev/null | head -20 || true)"
+  fi
+  [ -n "$delta" ] || delta="(no new source commits since baseline ${base:-none}; initial/refresh port)"
+
+  title="Base sync: ${source_branch} -> ${target}"
+  [ -n "$pr_title" ] && title="Base sync: ${pr_title} (${source_branch} -> ${target})"
+
+  body="Automated base-branch synchronization.
+
+- Source: ${source_branch} @ ${source_ref:0:12}
+- Target: ${target}
+- Loom: ${loom}${is_mojmap:+ (mojmap target -- verbatim copy, no migration)}
+- Pipeline: loom migrateMappings (via ${SCRIPT_DIR}) + residual fixups + manifest registration + \`./gradlew build\` gate.
+
+**Status: ${status_line}**"
+
+  if [ -n "$failure_details" ]; then
+    body+="
+
+The pipeline delivered the migrated tree even though a gate failed, so the remaining port issues can be fixed directly on this branch (push to refresh the PR, which stays open). Full logs are in the run's \`sync-base-${target}\` artifact. Details:
+
+\`\`\`
+${failure_details}
+\`\`\`"
+  fi
+
+  body+="
+
+Source commits being ported:
+${delta}
+
+Please review: mixin \`@Inject(method=...)\` strings, chunk coordinate accessors and any API that changed between Minecraft versions. Resolve remaining porting issues manually, then merge."
+
+  git commit -m "sync(base): ${source_branch} -> ${target}" \
+           -m "$commit_note" \
+    >/dev/null
+
+  case "$delivery" in
+    dry)
+      echo "[sync-base] DRY: committed locally on ${sync_branch}, NOT pushed."
+      git --no-pager diff --stat origin/"$target"...HEAD || true
+      ;;
+    push)
+      git push --set-upstream origin "$sync_branch" || die "git push failed" 2
+      echo "[sync-base] PUSHED ${sync_branch} (to be merged into ${target})"
+      ;;
+    pr)
+      git push --set-upstream origin "$sync_branch" || die "git push failed" 2
+      if command -v gh >/dev/null 2>&1; then
+        repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+        [ -n "$repo" ] || repo="${GITHUB_REPOSITORY:-}"
+        if [ -z "$repo" ]; then die "cannot determine repo for gh" 2; fi
+        existing="$(gh pr view "$sync_branch" --repo "$repo" --json url --jq .url 2>/dev/null || true)"
+        if [ -n "$existing" ]; then
+          echo "[sync-base] PR already open: ${existing}"
+          gh pr edit "$sync_branch" --repo "$repo" --title "$title" --body "$body" >/dev/null 2>&1 \
+            || echo "[sync-base] warn: gh pr edit failed (PR still updated by push)"
+        else
+          gh pr create \
+            --repo "$repo" \
+            --base "$target" \
+            --head "$sync_branch" \
+            --title "$title" \
+            --body "$body" \
+            || die "gh pr create failed" 2
+        fi
+      else
+        echo "[sync-base] gh not available; pushed ${sync_branch}, open the PR manually"
+      fi
+      ;;
+  esac
+
+  if [ "$rc" -eq 0 ]; then
+    echo "[sync-base] ok: ${target} loom=${loom} delivery=${delivery}"
+  else
+    echo "[sync-base] DELIVERED ${sync_branch} despite FAILED gate (exit ${rc}: ${status_line})"
+  fi
+  exit "$rc"
+}
+
+# delivery-state for the linear flow below: initialized green; the verify/build
+# steps downgrade these on failure and the final deliver_changes call reports
+# them (exit code = final_rc), so a failed run still opens a marked PR.
+final_rc=0
+final_status="OK - build gate green"
+final_details=""
+commit_note="loom migrateMappings + residual fixups + manifest registration; build gate green."
+skip_build=0
+
+# ---------------------------------------------------------------------------
+# fixup_and_verify <dir> <label> -- run fixups.py --fix on $dir.
+# fixups.py --fix ALSO runs --verify internally and exits 3 when a raw mojmap
+# token survives: that is the DELIVERABLE failure (marked PR, build skipped).
+# Any other non-zero exit is a tool crash -> hard stop with NO PR.
+# ---------------------------------------------------------------------------
+fixup_and_verify() {
+  local dir="$1" label="$2"
+  if python3 "$SCRIPT_DIR/fixups.py" "$dir" "$mc_version" --fix >"$sync_tmp/verify.log" 2>&1; then
+    return 0
+  else
+    rc=$?
+  fi
+  cat "$sync_tmp/verify.log" >&2
+  if [ "$rc" -ne 3 ]; then
+    die "fixups.py --fix failed ($label, exit $rc)" 3
+  fi
+  echo "[sync-base] fixups verify FAILED ($label) -- tree will still be delivered for manual review (exit 3)"
+  final_rc=3
+  final_status="FIXUPS VERIFY FAILED"
+  final_details="$(grep -E '\[verify\]' "$sync_tmp/verify.log" | head -30 || true)"
+  commit_note="fixups verify FAILED (surviving mojmap tokens); delivered for manual port fixes - see PR body."
+  skip_build=1
+}
+
+# ---------------------------------------------------------------------------
 # 2+3. migrate + fixups (yarn targets only)
 # ---------------------------------------------------------------------------
 if [ "$is_mojmap" -eq 1 ]; then
   echo "[sync-base] mojmap/unobfuscated target: applying version fixups, then replacing $SRC_TREE verbatim"
-  python3 "$SCRIPT_DIR/fixups.py" "$import_dir" "$mc_version" --fix \
-    || die "fixups.py (mojmap) --fix failed" 3
-  python3 "$SCRIPT_DIR/fixups.py" "$import_dir" "$mc_version" --verify \
-    || die "fixups --verify found surviving 26.2-only API tokens; add a MOJMAP_RULES entry" 3
+  fixup_and_verify "$import_dir" "mojmap"
   rm -rf "$SRC_TREE"; mkdir -p "$SRC_TREE"
   cp -r "$import_dir"/. "$SRC_TREE/"
 else
@@ -237,10 +392,7 @@ else
   mv "$sync_tmp/build.gradle.bak" build.gradle
 
   echo "[sync-base] applying residual fixups..."
-  python3 "$SCRIPT_DIR/fixups.py" "$migrated_dir" "$mc_version" --fix \
-    || die "fixups.py --fix failed" 3
-  python3 "$SCRIPT_DIR/fixups.py" "$migrated_dir" "$mc_version" --verify \
-    || die "fixups --verify found surviving mojmap tokens; bump THIS branch's loom (not the rules)" 3
+  fixup_and_verify "$migrated_dir" "yarn"
 
   n_files="$(find "$migrated_dir" -name '*.java' | wc -l)"
   [ "$n_files" -gt 0 ] || die "migrateMappings produced no .java output in $migrated_dir" 3
@@ -258,89 +410,27 @@ python3 "$SCRIPT_DIR/apply_manifest.py" "$wt" verify \
   || die "apply_manifest.py verify failed" 4
 
 # ---------------------------------------------------------------------------
-# 5. build gate -- never ship without a green build
+# 5. build gate -- skip only when fixups verify already failed (the root
+#    cause is recorded above; the tree is still delivered). On any gate
+#    failure the migrated tree is STILL delivered as a failure-marked PR so
+#    porting gaps can be fixed manually on the sync branch instead of
+#    stalling the run.
 # ---------------------------------------------------------------------------
-echo "[sync-base] running build gate (./gradlew build)..."
-if ! ./gradlew --no-daemon --console=plain build >"$sync_tmp/gate.log" 2>&1; then
-  tail -n 60 "$sync_tmp/gate.log" >&2
-  die "build gate FAILED (see log tail)" 5
-fi
-echo "[sync-base] build gate green"
-
-# ---------------------------------------------------------------------------
-# 6. delivery
-# ---------------------------------------------------------------------------
-git add -A -- src
-# mojmap targets: apply_manifest.py also edits build.gradle (mirrors 26.2's
-# compileOnly fabric-resource-loader-v1 -- the 26.x merged game jar declares
-# MinecraftServer implements that fabric interface). Stage it so the PR
-# carries the change; yarn targets never diff build.gradle here.
-if [ "$is_mojmap" -eq 1 ] && ! git diff --quiet -- build.gradle; then
-  git add build.gradle
-fi
-if git diff --cached --quiet; then
-  echo "[sync-base] nothing to commit -- already in sync -> exit 6"
-  exit 6
+if [ "$skip_build" -eq 1 ]; then
+  echo "[sync-base] skipping build gate: fixups verify failed earlier (run delivers the tree with exit 3)"
+else
+  echo "[sync-base] running build gate (./gradlew build)..."
+  if ! ./gradlew --no-daemon --console=plain build >"$sync_tmp/gate.log" 2>&1; then
+    tail -n 60 "$sync_tmp/gate.log" >&2
+    echo "[sync-base] build gate FAILED -- tree will still be delivered for manual review (exit 5)"
+    final_rc=5
+    final_status="BUILD GATE FAILED"
+    final_details="$(grep -E 'error:|FAILURE: Build failed|BUILD FAILED' "$sync_tmp/gate.log" | head -30 || true)"
+    commit_note="build gate FAILED (migrated tree does not compile); delivered for manual port fixes - see PR body."
+  else
+    echo "[sync-base] build gate green"
+  fi
 fi
 
-base="$(sed -nE 's/^# Last synced from: [^@]+ @ ([0-9a-f]+).*/\1/p' "$MANIFEST" | head -1 || true)"
-delta=""
-if [ -n "$base" ] && git cat-file -e "${base}^{commit}" >/dev/null 2>&1; then
-  delta="$(git log --oneline --no-merges "${base}..${source_ref}" -- "$SRC_TREE" 2>/dev/null | head -20 || true)"
-fi
-[ -n "$delta" ] || delta="(no new source commits since baseline ${base:-none}; initial/refresh port)"
-
-title="Base sync: ${source_branch} -> ${target}"
-[ -n "$pr_title" ] && title="Base sync: ${pr_title} (${source_branch} -> ${target})"
-body="Automated base-branch synchronization.
-
-- Source: ${source_branch} @ ${source_ref:0:12}
-- Target: ${target}
-- Loom: ${loom}${is_mojmap:+ (mojmap target -- verbatim copy, no migration)}
-- Pipeline: loom migrateMappings (via ${SCRIPT_DIR}) + residual fixups + manifest registration + \`./gradlew build\` gate.
-
-Source commits being ported:
-${delta}
-
-Please review: mixin \`@Inject(method=...)\` strings, chunk coordinate accessors and any API that changed between Minecraft versions. Resolve remaining porting issues manually, then merge."
-
-git commit -m "sync(base): ${source_branch} -> ${target}" \
-         -m "loom migrateMappings + residual fixups + manifest registration; build gate green." \
-  >/dev/null
-
-case "$delivery" in
-  dry)
-    echo "[sync-base] DRY: committed locally on ${sync_branch}, NOT pushed."
-    git --no-pager diff --stat origin/"$target"...HEAD || true
-    ;;
-  push)
-    git push --set-upstream origin "$sync_branch" || die "git push failed" 2
-    echo "[sync-base] PUSHED ${sync_branch} (to be merged into ${target})"
-    ;;
-  pr)
-    git push --set-upstream origin "$sync_branch" || die "git push failed" 2
-    if command -v gh >/dev/null 2>&1; then
-      repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
-      [ -n "$repo" ] || repo="${GITHUB_REPOSITORY:-}"
-      if [ -z "$repo" ]; then die "cannot determine repo for gh" 2; fi
-      existing="$(gh pr view "$sync_branch" --repo "$repo" --json url --jq .url 2>/dev/null || true)"
-      if [ -n "$existing" ]; then
-        echo "[sync-base] PR already open: ${existing}"
-        gh pr edit "$sync_branch" --repo "$repo" --title "$title" --body "$body" >/dev/null 2>&1 \
-          || echo "[sync-base] warn: gh pr edit failed (PR still updated by push)"
-      else
-        gh pr create \
-          --repo "$repo" \
-          --base "$target" \
-          --head "$sync_branch" \
-          --title "$title" \
-          --body "$body" \
-          || die "gh pr create failed" 2
-      fi
-    else
-      echo "[sync-base] gh not available; pushed ${sync_branch}, open the PR manually"
-    fi
-    ;;
-esac
-
-echo "[sync-base] ok: ${target} loom=${loom} delivery=${delivery}"
+# 6. delivery -- green path or failure-marked path (exit code = final_rc)
+deliver_changes "$commit_note" "$final_status" "$final_details" "$final_rc"

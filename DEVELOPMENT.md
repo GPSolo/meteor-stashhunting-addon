@@ -181,12 +181,21 @@ pin — plus `fixups.py`, `apply_manifest.py`):
    provides it).
 5. The target's `src/main/java` is **replaced** by the migrated tree (mirror semantics —
    anything not on the source vanishes from every branch).
-6. **Gate:** `./gradlew build` — nothing ships without green.
+6. **Gate:** `./gradlew build`.
 7. **Deliver:** `dry` / `push` / `pr` (PR base = target branch, head = sync branch).
 
-**Exit codes:** `0` ok · `2` usage/ref · `3` migrate/fixups (loom generation gap — fix by
-bumping *that branch's* loom, never by widening fixups) · `4` manifest · `5` build gate ·
-`6` already in sync (no-op).
+**Exit codes:** `0` ok · `2` usage/ref · `3` migrate crash **or** fixups verify failed · `4`
+manifest · `5` build gate · `6` already in sync (no-op).
+
+**Deliver-on-failure:** when the build gate (`5`) or fixups `--verify` (`3`) fails, the migrated
+tree is **still committed and delivered** as a PR marked with the failing check + a log excerpt
+(`**Status: BUILD GATE FAILED**` / `FIXUPS VERIFY FAILED`, plus the compile errors or surviving
+tokens). Remaining port issues are fixed directly on the sync branch and pushed (the PR stays
+open); the run still exits non-zero so CI shows red. On a `--verify` failure the build gate is
+skipped (the verify failure is the root cause). Hard stops with **no PR** (nothing reviewable):
+migrateMappings crashing (no migrated output; fix by bumping *that branch's* loom, never by
+widening fixups) and `apply_manifest.py` failures (`4` -- metadata registration broken; fix and
+rerun). Logs (`migrate.log`, `gate.log`, `verify.log`) are uploaded as artifacts on every run.
 
 **Scope rules** (`.github/scripts/base-source.txt`): (1) the sync scope is the entire
 `src/main/java` tree of the source branch — every `.java` under it is ported and

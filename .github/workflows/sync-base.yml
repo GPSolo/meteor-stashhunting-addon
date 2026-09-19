@@ -11,7 +11,7 @@
 #        -> loom migrateMappings (temporary mojmap mappings on the target, same
 #           minecraft version) + residual fixups; mojmap targets copy verbatim
 #        -> metadata registration (mixins auto-discovered) -- idempotent
-#        -> ./gradlew build gate  (nothing ships without a green build)
+#        -> ./gradlew build gate
 #        -> dry | push | pr
 #
 # DELIVERY:
@@ -21,6 +21,17 @@
 # The workflow default is `pr` so a dispatch produces reviewable PRs. Set
 # `pr_title` to describe what is being added (e.g. "TripResumer echo fix");
 # the PR body always lists the source commits being ported.
+#
+# DELIVER-ON-FAILURE: the run still opens/refreshes the PR even when a gate
+# fails (the script delivers the migrated tree and exits non-zero; the PR is
+# marked with the failing check + log excerpt so remaining port issues can be
+# fixed on the sync branch). The run stays red for signal. Failure modes:
+#   exit 3 -> fixups --verify failed (surviving mojmap token); build skipped
+#   exit 5 -> ./gradlew build gate failed (migrated tree does not compile)
+# Hard stops with NO PR (nothing reviewable to deliver): loom migrateMappings
+# crashing (exit 3, no migrated output) and apply_manifest.py metadata
+# failures (exit 4 -- rerun after fixing). All logs (migrate/gate/verify) are
+# uploaded as artifacts on every run (ignore on missing).
 #
 # matrix-prep: GitHub's expression language has NO string `replace` function,
 # so the comma-separated `version` input is split into a JSON array in a tiny
@@ -143,4 +154,5 @@ jobs:
           path: |
             sync-tmp/migrate.log
             sync-tmp/gate.log
+            sync-tmp/verify.log
           if-no-files-found: ignore
