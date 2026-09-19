@@ -50,14 +50,14 @@
 - EntityList
   - Displays the count of all the entities within render distance. (Made by [g-a-l-a-x-i-a](https://github.com/g-a-l-a-x-i-a))
 
-## Maintenance: QoL Sync Workflow
-The QoL feature set (7 files, canonical on the `26.2` branch: `NewerNewChunksData`,
+## Maintenance: Base Sync (QoL porting)
+The QoL feature set (7 files, canonical on the `26.2` base branch: `NewerNewChunksData`,
 `ChatComponentMixin`, `ClientPacketListenerMixin`, `AutoEXPPlus`, `AutoLogPlus`,
 `TrailFollower`, `TripResumer`) is kept in sync across every version branch with an
-automated pipeline (`sync-qol` workflow → `.github/scripts/sync-qol.sh`).
+automated pipeline (`sync-base` workflow → `.github/scripts/sync-base.sh`).
 
 How it works:
-- A run creates a dedicated worktree from `origin/<target>` on a `sync/qol-26.2-to-<target>`
+- A run creates a dedicated worktree from `origin/<target>` on a `sync/base-26.2-to-<target>`
   branch (**the target branch itself is never touched**) and delivers as PRs.
 - Yarn targets (1.21.x): loom `migrateMappings` converts the 26.2 mojmap code with that
   branch's own pinned loom, residual mechanical fixups are applied (`.github/scripts/fixups.py`),
@@ -67,15 +67,19 @@ How it works:
   merged game jar declares `MinecraftServer implements DataResourceStore`).
 - A `./gradlew build` gate must pass before anything is committed; exit codes:
   `0` ok, `2` usage/ref, `3` migrate/fixups, `4` manifest, `5` build gate, `6` already in sync.
+- PR titles describe what is being added (set `pr_title` at dispatch); PR bodies list the
+  source commits being ported (delta since the `base-source.txt` "Last synced from" pin).
 
 Dispatch inputs (`workflow_dispatch` on the default branch):
 - `version` — target branch(es), comma-separated, e.g. `1.21.1,1.21.8,26.1.2`.
-- `source_branch` — QoL source (default `26.2`).
+- `source_branch` — base/QoL source (default `26.2`).
 - `source_ref` — pin an exact source commit (empty = live `origin/<source_branch>` HEAD).
-- `qol_delivery` — `dry` (local commit only), `push`, or `pr` (default; opens/refreshes the PR).
+- `delivery` — `dry` (local commit only), `push`, or `pr` (default; opens/refreshes the PR).
 - `loom` — override the target's loom pin (empty = branch pin).
+- `pr_title` — PR title message describing what is being added (empty = default
+  `Base sync: 26.2 -> <target>`).
 
-Locally: `QOL_DELIVERY=dry bash .github/scripts/sync-qol.sh --target 1.21.5`
+Locally: `SYNC_DELIVERY=dry bash .github/scripts/sync-base.sh --target 1.21.5`
 
 ## FAQ
 - Q: How do I install this / where is the jar file?

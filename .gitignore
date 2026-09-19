@@ -34,7 +34,7 @@ run/
 
 # sync tooling scratch (worktree + import/migrate staging)
 
-qol-tmp/
+sync-tmp/
 
 # eclipse (bt)
 
