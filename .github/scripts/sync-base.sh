@@ -26,8 +26,12 @@
 #
 #   3. fixups.py --fix   : apply the small mechanical residual set loom leaves
 #                          behind for that toolchain generation (validated
-#                          byte-for-byte against the accepted 1.21.1 port).
-#      fixups.py --verify: fail if any raw mojmap token survives migration.
+#                          byte-for-byte against the accepted ports). Mojmap
+#                          targets (26.x verbatim copy) instead run
+#                          MOJMAP_RULES: mechanical rewrites of 26.2-only API
+#                          calls (e.g. mc.gui.toastManager() on 26.1.2).
+#      fixups.py --verify: fail if any raw mojmap token (yarn) or unrewritten
+#                          26.2-only API call (mojmap) survives.
 #
 #   4. apply_manifest.py : idempotent metadata edits. Mixin classes discovered
 #                          in the migrated mixin/ package are auto-registered
@@ -206,7 +210,11 @@ echo "[sync-base] imported ${#SRC_FILES[@]} files (whole $SRC_TREE) from ${sourc
 # 2+3. migrate + fixups (yarn targets only)
 # ---------------------------------------------------------------------------
 if [ "$is_mojmap" -eq 1 ]; then
-  echo "[sync-base] mojmap/unobfuscated target: replacing $SRC_TREE verbatim (no loom migrate)"
+  echo "[sync-base] mojmap/unobfuscated target: applying version fixups, then replacing $SRC_TREE verbatim"
+  python3 "$SCRIPT_DIR/fixups.py" "$import_dir" "$mc_version" --fix \
+    || die "fixups.py (mojmap) --fix failed" 3
+  python3 "$SCRIPT_DIR/fixups.py" "$import_dir" "$mc_version" --verify \
+    || die "fixups --verify found surviving 26.2-only API tokens; add a MOJMAP_RULES entry" 3
   rm -rf "$SRC_TREE"; mkdir -p "$SRC_TREE"
   cp -r "$import_dir"/. "$SRC_TREE/"
 else

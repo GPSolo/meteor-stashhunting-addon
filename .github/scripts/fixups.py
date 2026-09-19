@@ -16,6 +16,28 @@ WHY THIS FILE IS SMALL:
    IDEMPOTENT NO-OP when the target text is already present, so the common
    rule set is safe to share: rules only fire on mojmap leftovers.
 
+WHOLE-TREE NOTE (ChunkPos accessors):
+   26.2's ChunkPos is a Java RECORD (x()/z() accessors). loom cannot translate
+   a method call into the yarn public FIELD (chunk.x / chunk.z) or into
+   getStartX()/getStartZ() -- those names never existed in the target's
+   mappings. Which form is "correct" depends on the CALL SITE's intent, so
+   these rules are FILE-SCOPED (FILE_RULES / FILE_REGEX_RULES), grounded in
+   each file's accepted port:
+     - TrailFollower (highway/region math, block coordinates) -> getStartX()/
+       getStartZ()
+     - BetterStashFinder / OldChunkNotifier / ElytraFlyPlusPlus / TrailMaker
+       (chunk-INDEX math) -> the public fields .x / .z
+   The global `chunkPos.x()` -> `getStartX()` translation would CORRUPT the
+   index-math files (getStartX() is x << 4 -- a different value), which is why
+   the scoping is mandatory, not cosmetic.
+
+MOJMAP TARGETS (26.x -- verbatim copy, no loom):
+   Both sides are mojmap for DIFFERENT minecraft versions, so a small
+   per-version mechanical set (MOJMAP_RULES) rewrites 26.2-only API calls into
+   the target's accepted form. `--verify` for these targets asserts that no
+   rule's `old` token survives anywhere (i.e. every known drift spot was
+   rewritten).
+
 YARN VERSION SLICES (cross-VERSION drift -- loom cannot translate these even
    in principle, because the names never existed in the target's mappings):
      1.21.1   : isFallFlying(), World.getTopY(), getBottomY(),
@@ -137,7 +159,10 @@ LEGACY_YARN_RULES: List[Tuple[str, str, bool]] = [   # 1.21.1
 MID_YARN_RULES: List[Tuple[str, str, bool]] = [   # 1.21.4 (hybrid)
     (".getMaxY()", ".getTopYInclusive()", False),    # HeightLimitView
     (".getMinY()", ".getBottomY()", False),
-    (".isFallFlying()", ".isGliding()", False),      # LivingEntity
+    (".isFallFlying()", ".isGliding()", False),      # LivingEntity call sites
+    # method= string + handler-name form (1.21.4+) -- the 26.2 mojmap source
+    # injects the pre-rename target `isFallFlying`; yarn renamed it isGliding.
+    ('method = "isFallFlying"', 'method = "isGliding"', False),
     # slot: still the public FIELD on 1.21.4 (method does not exist yet)
     (".getInventory().getSelectedSlot()", ".getInventory().selectedSlot", False),
 ]
@@ -145,18 +170,8 @@ MODERN_YARN_RULES: List[Tuple[str, str, bool]] = [   # 1.21.5/1.21.8/1.21.10/1.2
     (".getMaxY()", ".getTopYInclusive()", False),
     (".getMinY()", ".getBottomY()", False),
     (".isFallFlying()", ".isGliding()", False),
+    ('method = "isFallFlying"', 'method = "isGliding"', False),
     # getSelectedSlot() METHOD exists (field turned private) -- no rule
-]
-
-# Build the regex rules as compiled patterns for readability.
-_REGEX_RULES: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"\.identifier\(\)"), ".getValue()"),
-    (re.compile(r"getChunkPos\(\)\.x\(\)"), "getChunkPos().getStartX()"),
-    (re.compile(r"getChunkPos\(\)\.z\(\)"), "getChunkPos().getStartZ()"),
-    (re.compile(r"chunkPos\.x\(\)"), "chunkPos.getStartX()"),
-    (re.compile(r"chunkPos\.z\(\)"), "chunkPos.getStartZ()"),
-    (re.compile(r"chunkDelta\.x\(\)"), "chunkDelta.getStartX()"),
-    (re.compile(r"chunkDelta\.z\(\)"), "chunkDelta.getStartZ()"),
 ]
 
 FIXUPS: dict = {
@@ -173,28 +188,117 @@ FIXUPS: dict = {
 }
 
 # ---------------------------------------------------------------------------
-def apply_rules(text: str, rules: List[Tuple]) -> str:
+# Whole-tree ChunkPos accessor translations -- FILE-SCOPED (see module doc:
+# block-coordinate sites want getStartX()/getStartZ(), chunk-index sites want
+# the public .x/.z fields; a global rule would corrupt one or the other).
+# ---------------------------------------------------------------------------
+GLOBAL_REGEX_RULES: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"\.identifier\(\)"), ".getValue()"),
+]
+
+# Block-coordinate call sites (TrailFollower highway/region math) -- byte-
+# for-byte ground truth: chunkPos.getStartX()/getStartZ() etc. loom already
+# converts chunkPosition() -> getChunkPos() at migration time, so only the
+# accessor call remains to rewrite.
+FILE_REGEX_RULES: dict = {
+    "com/stash/hunt/modules/TrailFollower.java": [
+        (re.compile(r"getChunkPos\(\)\.x\(\)"), "getChunkPos().getStartX()"),
+        (re.compile(r"getChunkPos\(\)\.z\(\)"), "getChunkPos().getStartZ()"),
+        (re.compile(r"chunkPos\.x\(\)"), "chunkPos.getStartX()"),
+        (re.compile(r"chunkPos\.z\(\)"), "chunkPos.getStartZ()"),
+        (re.compile(r"chunkDelta\.x\(\)"), "chunkDelta.getStartX()"),
+        (re.compile(r"chunkDelta\.z\(\)"), "chunkDelta.getStartZ()"),
+    ],
+    # Chunk-index call sites -- the accepted ports use the public yarn fields
+    # chunk.x / chunk.z. Regex form survives loom's class renames (e.g.
+    # Vec3 -> Vec3d) because it only touches the accessor call itself.
+    "com/stash/hunt/modules/BetterStashFinder.java": [
+        (re.compile(r"chunkPos\.x\(\)"), "chunkPos.x"),
+        (re.compile(r"chunkPos\.z\(\)"), "chunkPos.z"),
+    ],
+    "com/stash/hunt/modules/OldChunkNotifier.java": [
+        (re.compile(r"chunkPos\.x\(\)"), "chunkPos.x"),
+        (re.compile(r"chunkPos\.z\(\)"), "chunkPos.z"),
+        (re.compile(r"playerChunkPos\.x\(\)"), "playerChunkPos.x"),
+        (re.compile(r"playerChunkPos\.z\(\)"), "playerChunkPos.z"),
+    ],
+}
+
+# Literal (context-bound) translations that would be unsafe as bare regexes.
+# chunk().getPos() accessors -> fields (both files' accepted ports).
+_CHUNKPOS_GETPOS_RULES: List[Tuple[str, str, bool]] = [
+    ("event.chunk().getPos().x()", "event.chunk().getPos().x", False),
+    ("event.chunk().getPos().z()", "event.chunk().getPos().z", False),
+]
+FILE_RULES: dict = {
+    "com/stash/hunt/modules/BetterStashFinder.java": _CHUNKPOS_GETPOS_RULES,
+    "com/stash/hunt/modules/OldChunkNotifier.java": _CHUNKPOS_GETPOS_RULES,
+    "com/stash/hunt/modules/ElytraFlyPlusPlus.java": [
+        ("new BlockPos(pos.x() * 16 + x, y, pos.z() * 16 + z)",
+         "new BlockPos(pos.x * 16 + x, y, pos.z * 16 + z)", False),
+    ],
+    "com/stash/hunt/modules/TrailMaker.java": [
+        ("removeHighlight(point.x(), point.z(), dimension)",
+         "removeHighlight(point.x, point.z, dimension)", False),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Mojmap targets (26.x -- verbatim copy, no loom): mechanical rewrites of
+# 26.2-only API calls into the target's accepted form. Keyed by target
+# version; ground truth = each accepted port's file content.
+# ---------------------------------------------------------------------------
+MOJMAP_RULES: dict = {
+    # 26.1.2: 26.2 moved toastManager()/setScreen()/screen() onto the Gui;
+    # 26.1.2 keeps them on Minecraft. 26.2's Block builder-chains
+    # (waxed()/oxidized()/unaffected()) are plain block constants here.
+    "26.1.2": [
+        ("mc.gui.toastManager().addToast", "mc.getToastManager().addToast", False),
+        ("mc.gui.setScreen(", "mc.setScreen(", False),
+        ("mc.gui.screen() instanceof", "mc.screen instanceof", False),
+        ("Blocks.CUT_COPPER.waxed().oxidized()", "Blocks.WAXED_OXIDIZED_CUT_COPPER", False),
+        ("Blocks.COPPER_BLOCK.waxed().unaffected()", "Blocks.WAXED_COPPER_BLOCK", False),
+        ("Blocks.COPPER_BLOCK.waxed().oxidized()", "Blocks.WAXED_OXIDIZED_COPPER", False),
+    ],
+}
+
+
+def _is_mojmap_target(mc_version: str) -> bool:
+    """26.x targets are unobfuscated/mojmap (no loom migration) -- their
+    fixups come from MOJMAP_RULES instead of the yarn FIXUPS slices."""
+    return mc_version.startswith("26.")
+
+
+def apply_rules(text: str, rules: List[Tuple],
+                regex_rules: List[Tuple[re.Pattern, str]]) -> str:
     for rule in rules:
         old, new, is_regex = rule
         if is_regex:
-            text, _ = re.subn(old, new, text)
-        else:
-            text = text.replace(old, new) if old in text else text
-    for pat, new in _REGEX_RULES:
-        text, _ = pat.subn(new, text)
+            text = re.sub(old, new, text)
+        elif old in text:
+            text = text.replace(old, new)
+    for pat, new in regex_rules:
+        text = pat.subn(new, text)[0]
     return text
 
 
-def run_fixups(migrated_dir: Path, mc_version: str) -> int:
-    rules = FIXUPS.get(mc_version) or FIXUPS["*"]
+def run_fixups(sync_dir: Path, mc_version: str) -> int:
+    is_mojmap = _is_mojmap_target(mc_version)
     count = 0
-    for java in sorted(migrated_dir.rglob("*.java")):
+    for java in sorted(sync_dir.rglob("*.java")):
+        rel = java.relative_to(sync_dir).as_posix()
+        if is_mojmap:
+            rules = list(MOJMAP_RULES.get(mc_version, []))
+            regexes: List[Tuple[re.Pattern, str]] = []
+        else:
+            rules = list(FIXUPS.get(mc_version) or FIXUPS["*"])
+            rules += FILE_RULES.get(rel, [])
+            regexes = GLOBAL_REGEX_RULES + FILE_REGEX_RULES.get(rel, [])
         orig = java.read_text(encoding="utf-8")
-        text = apply_rules(orig, rules)
+        text = apply_rules(orig, rules, regexes)
         if text != orig:
             java.write_text(text, encoding="utf-8")
-            print(f"[fixups] rewrote {java.relative_to(migrated_dir)}",
-                  file=sys.stderr)
+            print(f"[fixups] rewrote {rel}", file=sys.stderr)
             count += 1
     return count
 
@@ -241,20 +345,26 @@ def _strip_comments(text: str) -> str:
     return "".join(out)
 
 
-def verify(migrated_dir: Path, mc_version: str) -> int:
-    banned = DENYLIST + (EXTRA_DENYLIST.get(mc_version) or EXTRA_DENYLIST["*"])
+def verify(sync_dir: Path, mc_version: str) -> int:
+    if _is_mojmap_target(mc_version):
+        banned = [old for (old, _, _) in MOJMAP_RULES.get(mc_version, [])]
+        fail_msg = ("[verify] surviving 26.2-only API tokens; add a "
+                    "MOJMAP_RULES entry for them (or bump the rule)")
+    else:
+        banned = DENYLIST + (EXTRA_DENYLIST.get(mc_version) or EXTRA_DENYLIST["*"])
+        fail_msg = ("[verify] loom did not fully remap this version; bump this "
+                    "branch's loom (not fixups.py)")
     hits = []
-    for java in sorted(migrated_dir.rglob("*.java")):
+    for java in sorted(sync_dir.rglob("*.java")):
         text = _strip_comments(java.read_text(encoding="utf-8"))
         for bad in banned:
             if bad in text:
-                hits.append((java.relative_to(migrated_dir).as_posix(), bad))
+                hits.append((java.relative_to(sync_dir).as_posix(), bad))
     if hits:
         for rel, bad in hits[:25]:
             print(f"[verify] FAIL: {rel} still contains mojmap token {bad!r}",
                   file=sys.stderr)
-        print("[verify] loom did not fully remap this version; bump this "
-              "branch's loom (not fixups.py)", file=sys.stderr)
+        print(fail_msg, file=sys.stderr)
         return 3
     print("[verify] ok: no surviving mojmap tokens")
     return 0
@@ -262,19 +372,19 @@ def verify(migrated_dir: Path, mc_version: str) -> int:
 
 def main() -> None:
     if len(sys.argv) != 4:
-        print("usage: fixups.py <migrated_src_dir> <mc_version> <--fix|--verify>",
+        print("usage: fixups.py <sync_src_dir> <mc_version> <--fix|--verify>",
               file=sys.stderr)
         sys.exit(2)
-    migrated_dir = Path(sys.argv[1])
-    if not migrated_dir.is_dir():
-        print(f"fixups.py: not a directory: {migrated_dir}", file=sys.stderr)
+    sync_dir = Path(sys.argv[1])
+    if not sync_dir.is_dir():
+        print(f"fixups.py: not a directory: {sync_dir}", file=sys.stderr)
         sys.exit(2)
     mc_version = sys.argv[2]
     mode = sys.argv[3]
     if mode == "--verify":
-        sys.exit(verify(migrated_dir, mc_version))
-    run_fixups(migrated_dir, mc_version)
-    sys.exit(verify(migrated_dir, mc_version))
+        sys.exit(verify(sync_dir, mc_version))
+    run_fixups(sync_dir, mc_version)
+    sys.exit(verify(sync_dir, mc_version))
 
 
 if __name__ == "__main__":
