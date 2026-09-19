@@ -5,12 +5,12 @@ import com.stash.hunt.modules.searcharea.SearchAreaModes;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.AutoReconnect;
-import meteordevelopment.meteorclient.systems.modules.movement.BoatFly;
+import meteordevelopment.meteorclient.systems.modules.movement.EntityControl;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
-
+import net.minecraft.util.math.Vec3d;
 import java.io.*;
 
 import static meteordevelopment.meteorclient.utils.player.ChatUtils.info;
@@ -58,9 +58,9 @@ public class Rectangle extends SearchAreaMode
 
     private void printRectangleEstimate()
     {
-        Class<? extends Module> boatFly = BoatFly.class;
-        Module module = Modules.get().get(boatFly);
-        double speedBPS = (double)module.settings.get("speed").get();
+        Class<? extends Module> entityControl = EntityControl.class;
+        Module module = Modules.get().get(entityControl);
+        double speedBPS = (double)module.settings.get("horizontal-speed").get();
         double rowDistance = Math.abs(pd.initialPos.getX() - pd.targetPos.getX());
         int rowCount = Math.abs(pd.currPos.getZ() - pd.targetPos.getZ()) / 16 / searchArea.rowGap.get();
         double totalBlocks = rowCount * (rowDistance + (searchArea.rowGap.get() * 16));
@@ -91,7 +91,7 @@ public class Rectangle extends SearchAreaMode
             }
             else
             {
-                mc.player.setYaw((float) Rotations.getYaw(pd.currPos.toCenterPos()));
+                mc.player.setYaw((float) Rotations.getYaw(Vec3d.ofCenter(pd.currPos)));
                 setPressed(mc.options.forwardKey, true);
             }
             return;
