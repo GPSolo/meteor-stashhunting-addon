@@ -143,10 +143,11 @@ EXTRA_DENYLIST: dict = {
     # exist). isFallFlying/getTopY are CORRECT here -- never banned.
     # canHaveWeather() absent -> bedWorks() form. Pre-Builder meteor-client:
     # MeteorToast.Builder must not survive (constructor form is the API).
-    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder"],
+    # HashedStack does not exist in these yarns (whole-block rewrite).
+    "1.21.1": ["getSelectedSlot()", "getGameProfile().name()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "HashedStack"],
     # hybrid (1.21.4)/mid (1.21.5, 1.21.8): isFallFlying and no-arg getTopY()
     # are gone; getName() getter is the API; slot is still the field on 1.21.4
-    "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder"],
+    "1.21.4": ["getSelectedSlot()", "getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "HashedStack"],
     "1.21.5": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()", "MeteorToast.Builder", "getComponentHasher()"],
     "1.21.8": ["getGameProfile().name()", "isFallFlying", "getTopY()", "mc.world.canHaveWeather()", "profile.id()", "profile.name()"],
     # 1.21.10 (loom 1.13): GameProfile.name is a FIELD again -- .name() is
@@ -280,7 +281,7 @@ WHOLE_TREE_YARN_RULES: List[Tuple[str, str, bool]] = [
 #   leaves it unmigrated and 1.21.5 yarn is still unmapped for it -- the
 #   accepted port uses method_68823(), handled by the 1.21.5 slice. loom 1.8
 #   (1.21.1/1.21.4) leaves the whole HashedStack block unmigrated -- handled by
-#   the ELYTRA_LEGACY_SWAP rules, never by a global token rewrite.
+#   the FILE_RULES_BY_VERSION legacy swap rules, never by a global rewrite.
 #   DENYLIST keeps bare `decoratedHashOpsGenenerator` (+ the 1.21.5 slice bans
 #   `getComponentHasher`) so a NEW drift site fails --verify.
 
@@ -407,6 +408,84 @@ FILE_RULES: dict = {
     ],
 }
 
+# Version-sliced FILE_RULES: same file-scoping, but keyed by minecraft version
+# so a branch-specific rewrite never runs on branches where the modern form is
+# correct (e.g. the 1.21.1/1.21.4 HashedStack rewrite must NOT touch the
+# ItemStackHash form used on 1.21.5+).
+FILE_RULES_BY_VERSION: dict = {
+    # loom 1.8 (1.21.1/1.21.4) leaves the whole 26.2 stack-hash block
+    # unmigrated: net.minecraft.network.HashedStack does not exist in those
+    # yarns. The accepted ports predate it -- plain ItemStack puts and the
+    # 7-arg ClickSlotC2SPacket. Ground truth = each branch's swapToItem()/
+    # sendSwapPacket() (identical on both versions).
+    "1.21.1": {
+        "com/stash/hunt/modules/ElytraFlyPlusPlus.java": [
+            ("import net.minecraft.network.HashedStack;\n", "", False),
+            ("Int2ObjectMap<HashedStack> changedSlots = new Int2ObjectOpenHashMap<>();",
+             "Int2ObjectMap<ItemStack> changedSlots = new Int2ObjectOpenHashMap<>();", False),
+            ("changedSlots.put(6, HashedStack.create(hotbarSwapItem, mc.getNetworkHandler().decoratedHashOpsGenenerator()));",
+             "changedSlots.put(6, hotbarSwapItem);", False),
+            ("changedSlots.put(slot + 36, HashedStack.create(chestItem, mc.getNetworkHandler().decoratedHashOpsGenenerator()));",
+             "changedSlots.put(slot + 36, chestItem);", False),
+            ("sendSwapPacket(changedSlots, (byte)slot);",
+             "sendSwapPacket(changedSlots, slot);", False),
+            ("private void sendSwapPacket(Int2ObjectMap<HashedStack> changedSlots, byte buttonNum) {",
+             "private void sendSwapPacket(Int2ObjectMap<ItemStack> changedSlots, int buttonNum) {", False),
+            ("""        mc.player.networkHandler.sendPacket(new ClickSlotC2SPacket(
+            syncId,
+            stateId,
+            (short) 6,
+            buttonNum,
+            SlotActionType.SWAP,
+            changedSlots,
+            HashedStack.EMPTY
+        ));""",
+             """        mc.player.networkHandler.sendPacket(new ClickSlotC2SPacket(
+            syncId,
+            stateId,
+            6,
+            buttonNum,
+            SlotActionType.SWAP,
+            new ItemStack(Items.AIR),
+            changedSlots
+        ));""", False),
+        ],
+    },
+    "1.21.4": {
+        "com/stash/hunt/modules/ElytraFlyPlusPlus.java": [
+            ("import net.minecraft.network.HashedStack;\n", "", False),
+            ("Int2ObjectMap<HashedStack> changedSlots = new Int2ObjectOpenHashMap<>();",
+             "Int2ObjectMap<ItemStack> changedSlots = new Int2ObjectOpenHashMap<>();", False),
+            ("changedSlots.put(6, HashedStack.create(hotbarSwapItem, mc.getNetworkHandler().decoratedHashOpsGenenerator()));",
+             "changedSlots.put(6, hotbarSwapItem);", False),
+            ("changedSlots.put(slot + 36, HashedStack.create(chestItem, mc.getNetworkHandler().decoratedHashOpsGenenerator()));",
+             "changedSlots.put(slot + 36, chestItem);", False),
+            ("sendSwapPacket(changedSlots, (byte)slot);",
+             "sendSwapPacket(changedSlots, slot);", False),
+            ("private void sendSwapPacket(Int2ObjectMap<HashedStack> changedSlots, byte buttonNum) {",
+             "private void sendSwapPacket(Int2ObjectMap<ItemStack> changedSlots, int buttonNum) {", False),
+            ("""        mc.player.networkHandler.sendPacket(new ClickSlotC2SPacket(
+            syncId,
+            stateId,
+            (short) 6,
+            buttonNum,
+            SlotActionType.SWAP,
+            changedSlots,
+            HashedStack.EMPTY
+        ));""",
+             """        mc.player.networkHandler.sendPacket(new ClickSlotC2SPacket(
+            syncId,
+            stateId,
+            6,
+            buttonNum,
+            SlotActionType.SWAP,
+            new ItemStack(Items.AIR),
+            changedSlots
+        ));""", False),
+        ],
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Mojmap targets (26.x -- verbatim copy, no loom): mechanical rewrites of
 # 26.2-only API calls into the target's accepted form. Keyed by target
@@ -456,6 +535,7 @@ def run_fixups(sync_dir: Path, mc_version: str) -> int:
             regexes: List[Tuple[re.Pattern, str]] = []
         else:
             rules = list(FIXUPS.get(mc_version) or FIXUPS["*"])
+            rules += FILE_RULES_BY_VERSION.get(mc_version, {}).get(rel, [])
             rules += FILE_RULES.get(rel, [])
             regexes = GLOBAL_REGEX_RULES + FILE_REGEX_RULES.get(rel, [])
         orig = java.read_text(encoding="utf-8")
