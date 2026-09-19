@@ -277,12 +277,12 @@ WHOLE_TREE_YARN_RULES: List[Tuple[str, str, bool]] = [
 #   26.2 mojmap ClientPacketListener.decoratedHashOpsGenenerator() (yes, that
 #   is the shipped name). loom 1.13/1.14.9 (1.21.8/1.21.10/1.21.11) remap it to
 #   yarn's getComponentHasher() -- CORRECT there, no rule. loom 1.10 (1.21.5)
-#   also rewrites it to getComponentHasher(), but 1.21.5 yarn only knows
-#   method_68823() (the accepted port's form) -- see the 1.21.5 slice. loom 1.8
+#   leaves it unmigrated and 1.21.5 yarn is still unmapped for it -- the
+#   accepted port uses method_68823(), handled by the 1.21.5 slice. loom 1.8
 #   (1.21.1/1.21.4) leaves the whole HashedStack block unmigrated -- handled by
 #   the ELYTRA_LEGACY_SWAP rules, never by a global token rewrite.
-#   DENYLIST keeps bare `decoratedHashOpsGenenerator` + `getComponentHasher`
-#   failsafes so a NEW drift site fails --verify.
+#   DENYLIST keeps bare `decoratedHashOpsGenenerator` (+ the 1.21.5 slice bans
+#   `getComponentHasher`) so a NEW drift site fails --verify.
 
 # meteor-client's MeteorToast gained a Builder (title/icon/text) in a late
 # 1.21.8-era snapshot; 1.21.1/1.21.4/1.21.5 meteor-client only has the
@@ -318,13 +318,14 @@ FIXUPS: dict = {
               + PROFILE_ACCESSOR_RULES + METEOR_TOAST_CTOR_RULES
               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
     # 1.21.5 (loom 1.10): modern API (method-based slot) but the pre-Builder
-    # meteor-client; gets the constructor-form toast. loom 1.10 rewrites the
-    # 26.2 mojmap hasher to getComponentHasher(), which does NOT exist on
-    # 1.21.5 -- the accepted form is the unmapped method_68823().
+    # meteor-client; gets the constructor-form toast. loom 1.10 leaves the
+    # 26.2 mojmap hasher call (decoratedHashOpsGenenerator()) unmigrated, and
+    # 1.21.5 yarn has no mapped name for it -- the accepted port calls the
+    # unmapped method_68823().
     "1.21.5": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
               + PROFILE_ACCESSOR_RULES + METEOR_TOAST_CTOR_RULES
               + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE
-              + [("getComponentHasher()", "method_68823()", False)],
+              + [("decoratedHashOpsGenenerator()", "method_68823()", False)],
     # 1.21.8 (loom 1.13): modern API (method-based slot)
     "1.21.8": COMMON_YARN_RULES + GP_NAME_GETTER + MODERN_YARN_RULES
               + PROFILE_ACCESSOR_RULES + WHOLE_TREE_YARN_RULES + CAN_HAVE_WEATHER_RULE,
