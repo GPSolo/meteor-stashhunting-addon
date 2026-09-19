@@ -71,11 +71,16 @@ loom_override=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --source-branch) source_branch="$2"; shift 2 ;;
-    --source)        source_ref="$2";    shift 2 ;;
-    --target)        target="$2";        shift 2 ;;
-    --delivery)      delivery="$2";      shift 2 ;;
-    --loom)          loom_override="$2"; shift 2 ;;
+    --source-branch=*) source_branch="${1#*=}"; shift ;;
+    --source-branch)   source_branch="$2"; shift 2 ;;
+    --source=*)        source_ref="${1#*=}"; shift ;;
+    --source)          source_ref="$2"; shift 2 ;;
+    --target=*)        target="${1#*=}"; shift ;;
+    --target)          target="$2"; shift 2 ;;
+    --delivery=*)      delivery="${1#*=}"; shift ;;
+    --delivery)        delivery="$2"; shift 2 ;;
+    --loom=*)          loom_override="${1#*=}"; shift ;;
+    --loom)            loom_override="$2"; shift 2 ;;
     *) die "unknown argument: $1" 2 ;;
   esac
 done
