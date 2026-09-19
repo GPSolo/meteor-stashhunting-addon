@@ -5,6 +5,7 @@ import baritone.api.pathing.goals.GoalXZ;
 import com.stash.hunt.Addon;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.stash.hunt.NewerNewChunksData;
 import com.stash.hunt.Utils;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -23,7 +24,6 @@ import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.item.Items;
 import xaeroplus.XaeroPlus;
 import xaeroplus.event.ChunkDataEvent;
 import xaeroplus.module.ModuleManager;
@@ -85,7 +85,13 @@ public class TrailFollower extends Module
     public enum OverworldFlightMode {
         VANILLA,
         PITCH40,
+        BARITONE_ELYTRA,
         OTHER
+    }
+
+    public enum ChunkSource {
+        XaeroPlus,
+        NewerNewChunks
     }
 
     public enum NetherPathMode {
@@ -95,7 +101,7 @@ public class TrailFollower extends Module
 
     public final Setting<OverworldFlightMode> overworldFlightMode = sgGeneral.add(new EnumSetting.Builder<OverworldFlightMode>()
         .name("overworld-flight-mode")
-        .description("Choose how TrailFollower flies in Overworld. If other is selected then nothing will be automatically enabled, instead just your yaw will be changed to point towards the trail.")
+        .description("Choose how TrailFollower flies in Overworld. If other is selected then nothing will be automatically enabled, instead just your yaw will be changed to point towards the trail. Baritone elytra uses baritone to fly along the trail and requires baritone to be installed.")
         .defaultValue(OverworldFlightMode.PITCH40)
         .build()
     );
@@ -217,10 +223,50 @@ public class TrailFollower extends Module
     // added trail deviation slider now that baritone is locked to trail pathing
     public final Setting<Double> maxTrailDeviation = sgAdvanced.add(new DoubleSetting.Builder()
         .name("max-trail-deviation")
-        .description("Maximum allowed angle (in degrees) from the original trail direction. Helps avoid switching to intersecting trails.")
-        .defaultValue(180.0)
+        .description("Maximum allowed angle (in degrees) from the committed trail heading that a found chunk can still be considered part of the trail. Helps avoid switching to intersecting trails.")
+        .defaultValue(90.0)
         .min(1.0)
         .sliderMax(270.0)
+        .build()
+    );
+
+    public final Setting<Double> directionChangeThreshold = sgAdvanced.add(new DoubleSetting.Builder()
+        .name("direction-change-threshold")
+        .description("Maximum angle (in degrees) between a detected chunk and the committed trail heading before the heading is blended toward it. Larger deviations require consecutive confirmation before the heading changes, preventing backtracking on intersecting trails.")
+        .defaultValue(30.0)
+        .min(1.0)
+        .sliderMax(90.0)
+        .build()
+    );
+
+    public final Setting<Integer> directionConfirmationChunks = sgAdvanced.add(new IntSetting.Builder()
+        .name("direction-confirmation-chunks")
+        .description("How many consecutive chunks in a new direction are required before the committed trail heading is changed. Only chunks found ahead of the current heading can confirm a change.")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(20)
+        .build()
+    );
+
+    public final Setting<Double> headingBlendScaling = sgAdvanced.add(new DoubleSetting.Builder()
+        .name("heading-blend-scaling")
+        .description("How quickly the committed trail heading blends toward confirmed chunk evidence. 1 = instant, 0 = never changes.")
+        .defaultValue(0.4)
+        .sliderRange(0.0, 1.0)
+        .build()
+    );
+
+    public final Setting<Boolean> circleOnStuck = sgAdvanced.add(new BoolSetting.Builder()
+        .name("circle-on-stuck")
+        .description("Circles in place to search for new chunks when none have been found recently. Keep on to keep running until the trail truly ends with no possible alternative path. When disabled, TrailFollower keeps flying straight along the committed trail heading while looking for more chunks.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<ChunkSource> chunkSource = sgAdvanced.add(new EnumSetting.Builder<ChunkSource>()
+        .name("chunk-source")
+        .description("Which addon to use as the source of chunk detection. XaeroPlus requires the XaeroPlus New Chunks and Old Chunks modules enabled. NewerNewChunks reads live data from the Trouser-Streak NewerNewChunks addon if it is running, or its saved chunk data files as a fallback.")
+        .defaultValue(ChunkSource.XaeroPlus)
         .build()
     );
 
@@ -275,6 +321,8 @@ public class TrailFollower extends Module
         .expireAfterWrite(Duration.ofMinutes(5))
         .build();
 
+    private final NewerNewChunksData newerNewChunksData = new NewerNewChunksData();
+
     // Credit to WarriorLost: https://github.com/WarriorLost/meteor-client/tree/master
 
     public TrailFollower()
@@ -288,6 +336,9 @@ public class TrailFollower extends Module
         followingTrail = false;
         trail = new ArrayDeque<>();
         possibleTrail = new ArrayDeque<>();
+        headingConfirmations = 0;
+        pendingHeading = 0;
+        directionEstablished = false;
     }
 
     boolean started = false;
@@ -297,6 +348,13 @@ public class TrailFollower extends Module
     {
         resetTrail();
         XaeroPlus.EVENT_BUS.register(this);
+        newerNewChunksData.init();
+
+        if (mc.player != null)
+        {
+            committedYaw = getActualYaw(mc.player.getYaw());
+            targetYaw = committedYaw;
+        }
 
         if (started)
         {
@@ -326,8 +384,23 @@ public class TrailFollower extends Module
                 {
                     if (!currentDimension.equals(World.NETHER))
                     {
-                        followMode = FollowMode.YAWLOCK;
-                        info("You are in the overworld or end, basic yaw mode will be used.");
+                        if (overworldFlightMode.get() == OverworldFlightMode.BARITONE_ELYTRA)
+                        {
+                            try {
+                                Class.forName("baritone.api.BaritoneAPI");
+                                followMode = FollowMode.BARITONE;
+                                info("You are in the overworld or end, baritone elytra mode will be used.");
+                            } catch (ClassNotFoundException e) {
+                                info("Baritone is required to use baritone elytra. Disabling TrailFollower");
+                                this.toggle();
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            followMode = FollowMode.YAWLOCK;
+                            info("You are in the overworld or end, basic yaw mode will be used.");
+                        }
                     }
                     else
                     {
@@ -370,7 +443,8 @@ public class TrailFollower extends Module
                 {
                     trail.add(targetPos);
                 }
-                targetYaw = getActualYaw(mc.player.getYaw());
+                committedYaw = getActualYaw(mc.player.getYaw());
+                targetYaw = committedYaw;
             }
             else
             {
@@ -423,6 +497,14 @@ public class TrailFollower extends Module
 
     private double targetYaw;
 
+    // The direction TrailFollower is committed to. It is set from the player's facing
+    // direction on activation and only refined using chunks found ahead of it, so the
+    // module keeps flying one way instead of backtracking on the trail it just covered.
+    private double committedYaw = 0;
+    private boolean directionEstablished = false;
+    private double pendingHeading = 0;
+    private int headingConfirmations = 0;
+
     private int baritoneSetGoalTicks = 0;
 
     private void circle()
@@ -467,7 +549,7 @@ public class TrailFollower extends Module
                 }
             }
         }
-        if (followingTrail && System.currentTimeMillis() - lastFoundTrailTime > chunkFoundTimeout.get())
+        if (circleOnStuck.get() && followingTrail && System.currentTimeMillis() - lastFoundTrailTime > chunkFoundTimeout.get())
         {
             circle();
             return;
@@ -515,11 +597,8 @@ public class TrailFollower extends Module
                         if (!trail.isEmpty()) {
                             Vec3d baritoneTarget;
                             if (netherPathMode.get() == NetherPathMode.AVERAGE) {
-                                Vec3d averagePos = calculateAveragePosition(trail);
-                                Vec3d directionVec = averagePos.subtract(mc.player.getPos()).normalize();
-                                Vec3d predictedPos = mc.player.getPos().add(directionVec.multiply(10));
-                                targetYaw = Rotations.getYaw(predictedPos);
-                                baritoneTarget = positionInDirection(mc.player.getPos(), targetYaw, pathDistanceActual);
+                                targetYaw = committedYaw;
+                                baritoneTarget = positionInDirection(mc.player.getPos(), committedYaw, pathDistanceActual);
                             } else {
                                 Vec3d lastPos = trail.getLast();
                                 baritoneTarget = lastPos;
@@ -529,11 +608,13 @@ public class TrailFollower extends Module
                                 .setGoalAndPath(new GoalXZ((int) baritoneTarget.x, (int) baritoneTarget.z));
                         }
                     } else {
-                        // use average path for overworld
-                        Vec3d targetPos = positionInDirection(mc.player.getPos(), targetYaw, pathDistanceActual);
-                        BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoalAndPath(new GoalXZ((int) targetPos.x, (int) targetPos.z));
+                        // fly along the committed trail heading for overworld with baritone elytra
+                        Vec3d targetPos = positionInDirection(mc.player.getPos(), committedYaw, pathDistanceActual);
+                        BaritoneAPI.getSettings().elytraTermsAccepted.value = true;
+                        BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoal(null);
+                        BaritoneAPI.getProvider().getPrimaryBaritone().getElytraProcess().pathTo(new GoalXZ((int) targetPos.x, (int) targetPos.z));
 
-                        targetYaw = Rotations.getYaw(targetPos); // smooth rotation target
+                        targetYaw = committedYaw;
                     }
                     if (autoElytra.get() && (BaritoneAPI.getProvider().getPrimaryBaritone().getElytraProcess().currentDestination() == null))
                     {
@@ -576,18 +657,18 @@ public class TrailFollower extends Module
         // if found in the cache then ignore the chunk
         if (seenChunksCache.getIfPresent(chunkLong) != null) return;
 
-        ChunkPos chunkDelta = new ChunkPos(chunkPos.x - mc.player.getChunkPos().x, chunkPos.z - mc.player.getChunkPos().z);
+        ChunkPos chunkDelta = new ChunkPos(chunkPos.getStartX() - mc.player.getChunkPos().getStartX(), chunkPos.getStartZ() - mc.player.getChunkPos().getStartZ());
 
         if (oppositeDimension.get())
         {
             if (currentDimension.equals(World.OVERWORLD))
             {
-                chunkPos = new ChunkPos(mc.player.getChunkPos().x / 8 + chunkDelta.x, mc.player.getChunkPos().z / 8 + chunkDelta.z);
+                chunkPos = new ChunkPos(mc.player.getChunkPos().getStartX() / 8 + chunkDelta.getStartX(), mc.player.getChunkPos().getStartZ() / 8 + chunkDelta.getStartZ());
                 currentDimension = World.NETHER;
             }
             else if (currentDimension.equals(World.NETHER))
             {
-                chunkPos = new ChunkPos(mc.player.getChunkPos().x * 8 + chunkDelta.x, mc.player.getChunkPos().z * 8 + chunkDelta.z);
+                chunkPos = new ChunkPos(mc.player.getChunkPos().getStartX() * 8 + chunkDelta.getStartX(), mc.player.getChunkPos().getStartZ() * 8 + chunkDelta.getStartZ());
 //                log("ChunkPos: " + chunkPos.x + ", " + chunkPos.z);
                 currentDimension = World.OVERWORLD;
             }
@@ -603,7 +684,7 @@ public class TrailFollower extends Module
 
 
         // use chunk.getPos() here instead of the dimension specific chunkPos because we have to path to blocks in our dimension
-        Vec3d pos = chunk.getPos().getCenterAtY(0).toCenterPos();
+        Vec3d pos = Vec3d.ofCenter(chunk.getPos().getCenterAtY(0));
         posDebug = pos;
 
         if (!followingTrail)
@@ -629,13 +710,19 @@ public class TrailFollower extends Module
         // add chunks to the list
 
         double chunkAngle = Rotations.getYaw(pos);
-        double angleDiff = Utils.angleDifference(targetYaw, chunkAngle);
-        // was not able to add this before, but now can successfully filter out most other trails using the most recent chunk for pathing
-        if (followingTrail && Math.abs(angleDiff) > maxTrailDeviation.get())
+        double angleDiff = Utils.angleDifference(committedYaw, chunkAngle);
+        // only accept chunks that are reasonably close to the committed trail heading so we don't switch to intersecting trails
+        if (Math.abs(angleDiff) > maxTrailDeviation.get())
         {
             return;
         }
         lastFoundTrailTime = System.currentTimeMillis();
+        // chunks behind the committed heading must never influence the trail direction
+        if (isBehindHeading(pos))
+        {
+            return;
+        }
+
         while(trail.size() >= maxTrailLength.get())
         {
             trail.pollFirst();
@@ -666,58 +753,121 @@ public class TrailFollower extends Module
             trail.add(pos);
         }
 
-
-        // instead of a calculated average coordinate, will use latest chunk added to trail
-        // *fix for overworld smoothing
-        if (!trail.isEmpty()) {
-            if (followMode == FollowMode.YAWLOCK) {
-                Vec3d averagePos = calculateAveragePosition(trail);
-                Vec3d positionVec = averagePos.subtract(mc.player.getPos()).normalize();
-                Vec3d targetPos = mc.player.getPos().add(positionVec.multiply(10));
-                targetYaw = Rotations.getYaw(targetPos);
-            } else {
-                Vec3d lastTrailPoint = trail.getLast();
-                targetYaw = Rotations.getYaw(lastTrailPoint);
-            }
-        }
+        // refine the committed heading only from forward evidence, with hysteresis against outliers
+        updateCommittedHeading(trail);
+        targetYaw = committedYaw;
     }
 
     private boolean isValidChunk(ChunkPos chunkPos, RegistryKey<World> currentDimension)
     {
+        if (chunkSource.get() == ChunkSource.NewerNewChunks)
+        {
+            return isValidChunkNewerNewChunks(chunkPos, currentDimension);
+        }
+
         PaletteNewChunks paletteNewChunks = ModuleManager.getModule(PaletteNewChunks.class);
         boolean is119NewChunk = paletteNewChunks
             .isNewChunk(
-                chunkPos.x,
-                chunkPos.z,
+                chunkPos.getStartX(),
+                chunkPos.getStartZ(),
                 currentDimension
             );
 
         boolean is112OldChunk = ModuleManager.getModule(OldChunks.class)
             .isOldChunk(
-                chunkPos.x,
-                chunkPos.z,
+                chunkPos.getStartX(),
+                chunkPos.getStartZ(),
                 currentDimension
             );
 
         boolean isHighlighted = is119NewChunk || paletteNewChunks
             .isInverseNewChunk(
-                chunkPos.x,
-                chunkPos.z,
+                chunkPos.getStartX(),
+                chunkPos.getStartZ(),
                 currentDimension
             );
 
         return isHighlighted && ((!is119NewChunk && !only112.get()) || is112OldChunk);
     }
 
-    // not using this method now but will keep it in case
-    private Vec3d calculateAveragePosition(ArrayDeque<Vec3d> positions)
+    private boolean isValidChunkNewerNewChunks(ChunkPos chunkPos, RegistryKey<World> currentDimension)
     {
+        boolean isNew = newerNewChunksData.isNewChunk(chunkPos.getStartX(), chunkPos.getStartZ(), currentDimension);
+        boolean isInverse = newerNewChunksData.isInverseChunk(chunkPos.getStartX(), chunkPos.getStartZ(), currentDimension);
+        boolean isOld = newerNewChunksData.isOldChunk(chunkPos.getStartX(), chunkPos.getStartZ(), currentDimension);
+
+        boolean isHighlighted = isNew || isInverse || isOld;
+        return isHighlighted && ((!isNew && !only112.get()) || isOld);
+    }
+
+    // Returns true if the position is behind the player relative to the committed trail heading.
+    private boolean isBehindHeading(Vec3d pos)
+    {
+        if (mc.player == null) return false;
+        Vec3d headingVec = Utils.yawToDirection(committedYaw);
+        return pos.subtract(mc.player.getPos()).dotProduct(headingVec) <= 0;
+    }
+
+    // Average of only the trail points that are ahead of the player along the committed
+    // heading. Points behind the player (which used to drag the average backwards and flip
+    // the direction) are excluded. Returns null if there are no forward points.
+    private Vec3d calculateForwardPosition(ArrayDeque<Vec3d> positions)
+    {
+        if (mc.player == null || positions.isEmpty()) return null;
+        Vec3d playerPos = mc.player.getPos().multiply(1, 0, 1);
+        Vec3d headingVec = Utils.yawToDirection(committedYaw);
         double sumX = 0, sumZ = 0;
-        for (Vec3d pos : positions) {
-            sumX += pos.x;
-            sumZ += pos.z;
+        int count = 0;
+        for (Vec3d pos : positions)
+        {
+            if (pos.subtract(playerPos).dotProduct(headingVec) > 0)
+            {
+                sumX += pos.x;
+                sumZ += pos.z;
+                count++;
+            }
         }
-        return new Vec3d(sumX / positions.size(), 0, sumZ / positions.size());
+        if (count == 0) return null;
+        return new Vec3d(sumX / count, 0, sumZ / count);
+    }
+
+    // Refines committedYaw using only forward evidence, with hysteresis so a single stray
+    // chunk can not flip the direction. Small deviations blend smoothly; larger deviations
+    // require directionConfirmationChunks consecutive chunks in the same new direction.
+    private void updateCommittedHeading(ArrayDeque<Vec3d> positions)
+    {
+        if (mc.player == null || positions.isEmpty()) return;
+        Vec3d forwardPos = calculateForwardPosition(positions);
+        if (forwardPos == null) return;
+
+        double candidateYaw = Rotations.getYaw(forwardPos);
+        double diff = Math.abs(Utils.angleDifference(committedYaw, candidateYaw));
+
+        if (diff <= directionChangeThreshold.get())
+        {
+            committedYaw = Utils.smoothRotation(committedYaw, candidateYaw, headingBlendScaling.get());
+            headingConfirmations = 0;
+            directionEstablished = true;
+        }
+        else if (diff <= maxTrailDeviation.get())
+        {
+            if (headingConfirmations == 0 || Math.abs(Utils.angleDifference(pendingHeading, candidateYaw)) <= directionChangeThreshold.get())
+            {
+                headingConfirmations++;
+            }
+            else
+            {
+                headingConfirmations = 1;
+                pendingHeading = candidateYaw;
+            }
+            if (headingConfirmations >= directionConfirmationChunks.get())
+            {
+                committedYaw = pendingHeading;
+                headingConfirmations = 0;
+                directionEstablished = true;
+                log("Trail heading changed to " + (int) getActualYaw((float) committedYaw) + " degrees.");
+            }
+        }
     }
 
     private float getActualYaw(float yaw)
