@@ -112,12 +112,20 @@ jobs:
           QOL_DELIVERY: ${{ inputs.qol_delivery || 'pr' }}
         run: |
           chmod +x "$QOL_SCRIPT_DIR/sync-qol.sh"
+          set +e
           "$QOL_SCRIPT_DIR/sync-qol.sh" \
             --source-branch="${{ inputs.source_branch || '26.2' }}" \
             --source="${{ inputs.source_ref }}" \
             --target="${{ matrix.target }}" \
             --delivery="${{ inputs.qol_delivery || 'pr' }}" \
             --loom="${{ inputs.loom }}"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 6 ]; then
+            echo "[workflow] exit 6: ${{ matrix.target }} already in sync (normal no-op)"
+            exit 0
+          fi
+          exit "$rc"
 
       - name: Upload sync diagnostics (${{ matrix.target }})
         if: always()
