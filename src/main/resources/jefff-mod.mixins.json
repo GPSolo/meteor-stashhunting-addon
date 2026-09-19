@@ -6,7 +6,9 @@
     "LivingEntityMixin",
     "EntityMixin",
     "KeyBindingMixin",
-    "XaeroDrawingMixin"
+    "XaeroDrawingMixin",
+    "ChatComponentMixin",
+    "ClientPacketListenerMixin"
   ],
   "injectors": {
     "defaultRequire": 1
