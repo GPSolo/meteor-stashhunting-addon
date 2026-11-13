@@ -1,7 +1,18 @@
 # jeff mod (For minecraft 1.21.1, 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2, 26.2, 26.3)
-#### Make an issue or DM me on discord `0x658` with any questions (Check the FAQ first)
+#### For this continuation, [open an issue](https://github.com/GPSolo/meteor-stashhunting-addon/issues) with any questions (check the FAQ first).
 #### Pull Requests are welcome, please make them to the 26.2 branch.
 #### Check the [Wiki](https://github.com/miles352/meteor-stashhunting-addon/wiki) for a full list of features and options.
+
+## Origin & credits
+
+This is a community-maintained continuation of
+[miles352/meteor-stashhunting-addon](https://github.com/miles352/meteor-stashhunting-addon),
+the original **jeff mod**, credited to **jefff** in the addon metadata. The original
+repository is archived; this continuation is maintained by [GPSolo](https://github.com/GPSolo).
+The original project, its developers, and contributors retain credit for their work.
+Git history, source notices, and the module credits below are preserved.
+See [CREDITS.md](CREDITS.md) for attribution and the current licensing status.
+
 ## Features
 ### Modules
 - ElytraFlyPlusPlus
