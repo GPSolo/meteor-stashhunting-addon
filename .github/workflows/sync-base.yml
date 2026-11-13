@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Ports the ENTIRE src/main/java tree (canonical on the 26.2 branch; the sync
 # scope is declared in base-source.txt) into every target version branch
-# (1.21.1/1.21.4/1.21.5/1.21.8/1.21.10/1.21.11/26.1.2) using each target's own
+# (1.21.1/1.21.4/1.21.5/1.21.8/1.21.10/1.21.11/26.1.2/26.3) using each target's own
 # pinned loom migrateMappings (see .github/scripts/sync-base.sh for the
 # pipeline):
 #
@@ -40,12 +40,18 @@
 name: sync-base
 
 on:
+  push:
+    branches: ['26.2']
+    paths:
+      - 'src/main/java/**'
+      - '.github/scripts/**'
+      - '.github/workflows/sync-base.yml'
   workflow_dispatch:
     inputs:
       version:
         description: 'Target version branch(es), comma-separated (no spaces), e.g. 1.21.1,1.21.4,1.21.8'
         required: true
-        default: '1.21.1,1.21.4,1.21.5,1.21.8,1.21.10,1.21.11,26.1.2'
+        default: '1.21.1,1.21.4,1.21.5,1.21.8,1.21.10,1.21.11,26.1.2,26.3'
       source_branch:
         description: 'Base source branch -- the src/main/java tree is ported from here'
         required: false
@@ -81,11 +87,23 @@ jobs:
     outputs:
       targets: ${{ steps.split.outputs.targets }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Test compatibility rules
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - id: split
+        env:
+          # Automatic pushes only update the new port; manual dispatch retains
+          # the existing all-version selection. Never evaluate inputs as shell.
+          TARGETS: ${{ github.event_name == 'push' && '26.3' || inputs.version }}
         run: |
-          V="${{ inputs.version }}"
-          V="$(printf '%s' "$V" | tr -d ' ' | tr ',' '\n' | sed 's/.*/\"&\"/' | paste -sd, -)"
-          echo "targets=[$V]" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os, re
+          targets = [v.strip() for v in os.environ['TARGETS'].split(',')]
+          if not targets or any(not re.fullmatch(r'(?:1\.21\.\d+|26\.\d+(?:\.\d+)?)', v) or v == '26.2' for v in targets):
+              raise SystemExit('Invalid target version (26.2 must remain the source)')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('targets=' + json.dumps(list(dict.fromkeys(targets))) + '\n')
+          PY
 
   sync:
     needs: matrix-prep

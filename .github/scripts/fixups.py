@@ -502,6 +502,16 @@ FILE_RULES_BY_VERSION: dict = {
 # version; ground truth = each accepted port's file content.
 # ---------------------------------------------------------------------------
 MOJMAP_RULES: dict = {
+    # 26.3 makes the interaction animation explicit. Match vanilla's predicted
+    # use-item swing: use the held item's interact animation and onSelf=False.
+    # Exact one-argument matches keep this idempotent and leave 26.2 untouched.
+    "26.3": [
+        (f"mc.player.swing(InteractionHand.{hand});",
+         f"mc.player.swing(InteractionHand.{hand}, "
+         f"mc.player.getItemInHand(InteractionHand.{hand}).getInteractAnimation(), false);",
+         False)
+        for hand in ("MAIN_HAND", "OFF_HAND")
+    ],
     # 26.1.2: 26.2 moved toastManager()/setScreen()/screen() onto the Gui;
     # 26.1.2 keeps them on Minecraft. 26.2's Block builder-chains
     # (waxed()/oxidized()/unaffected()) are plain block constants here.
