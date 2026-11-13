@@ -38,7 +38,7 @@ manifest — version bumps are manual, per branch.
 |---|---|---|---|
 | **Build Pull Request** | `.github/workflows/pull_request.yml` | `pull_request` | Builds PRs with JDK 25 for 26.x or JDK 21 for 1.21.x and uploads `build/libs` as an artifact (the merge gate). |
 | **Publish Pre-Release** | `.github/workflows/publish.yml` | `push` to the 9 version branches + `workflow_dispatch` | Builds the pushed branch and updates the **single** pre-release channel `v<next>-pre` (currently `v0.16.9-pre`). Never marks `Latest`. |
-| **Publish Release** | `.github/workflows/release.yml` | `workflow_dispatch` | Builds the chosen branch and creates the **stable** release `v<mod_version>` (prerelease-label off, marked `Latest`). |
+| **Publish Release** | `.github/workflows/release.yml` | `workflow_dispatch` | Builds the chosen branch and adds its jar to the **shared stable** release `<addon-version>` (e.g. `0.16.8`, marked `Latest`). |
 | **sync-base** | `.github/workflows/sync-base.yml` | `push` on base code/tooling + `workflow_dispatch` | Automatically ports `26.2` to `26.3`; manual runs select any supported target(s). Builds and delivers reviewable PRs. |
 
 ---
@@ -74,11 +74,17 @@ Manual stable-cut. Inputs:
 | `branch` | `26.2` | Version branch to release. |
 | `version` | *(empty)* | Optional `mod_version` override (e.g. `0.16.9-26.2`). Applied only in the runner's `gradle.properties` — **nothing is committed**. |
 
-It builds, then publishes tag **`v<mod_version>`** (or `v<version>` when overridden),
-title `jefff-mod <version>`, not a pre-release, marked **Latest**. Idempotent: re-running
-with an existing tag is a no-op.
+It builds, then uploads `jefff-mod-<addon-version>-<MC-branch>.jar` to the shared
+stable release tagged **`<addon-version>`**, with no `v` prefix or Minecraft suffix.
+For example, `mod_version=0.16.8-26.3` adds `jefff-mod-0.16.8-26.3.jar` to **`0.16.8`**,
+alongside the other Minecraft versions. If absent, the release is created with that
+version as its title. Existing titles, notes, tags, and other branches' assets are
+preserved. Re-running replaces only the exact asset for the chosen branch.
+The release is marked **Latest**; upload failures fail the workflow rather than
+being treated as a successful no-op. The legacy `0.16.8-SNAPSHOT-1.21.1` internal
+version is also accepted, with a stable asset name omitting `SNAPSHOT`.
 
-> Stable and pre-release never collide: stable = `v0.16.8-26.2`, pre-release channel =
+> Stable and pre-release never collide: stable = `0.16.8`, pre-release channel =
 > `v0.16.9-pre`. Releasing does not touch the channel and vice-versa.
 
 ### 2.3 sync-base (`sync-base.yml`)
@@ -110,7 +116,7 @@ unaffected.
    you're releasing — e.g. `0.16.9-26.2` — commit and push.
 2. Actions → **Publish Release** → Run workflow. Pick `branch` (and `version` instead of
    step 1 if you want an override without a commit).
-3. Wait for the run → verify the new `v<version>` release is `Latest` with the jar attached.
+3. Wait for the run → verify the shared `<addon-version>` release is `Latest` with this branch's jar attached. Do not create a release per Minecraft version.
 4. **(Once per cycle)** If you bumped the version, update `CHANNEL_VERSION` in
    `publish.yml` to the *next* version (e.g. `0.16.10`) and push — this is just the label of
    the pre-release channel.
@@ -228,7 +234,7 @@ Unrecognized future API changes still fail the build gate rather than being gues
 
 Regression tests: `python3 -m unittest discover -s .github/scripts -p 'test_*.py'`.
 Release the new port via **Publish Release**, `branch=26.3`, using its committed
-`mod_version=0.16.8-26.3` (tag `v0.16.8-26.3`). The pre-release channel stays `v0.16.9-pre`.
+`mod_version=0.16.8-26.3` (asset under shared tag `0.16.8`). The pre-release channel stays `v0.16.9-pre`.
 
 ### Environment
 
