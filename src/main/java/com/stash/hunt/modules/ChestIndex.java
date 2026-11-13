@@ -353,7 +353,7 @@ public class ChestIndex extends Module
                 if (mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult) == InteractionResult.SUCCESS)
                 {
                     awaiting = true;
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getItemInHand(InteractionHand.MAIN_HAND).getInteractAnimation(), false);
                     // find way to see when the interaction fails
                     info("interacted");
                     currPos[0] = blockPos.immutable();

@@ -8,17 +8,17 @@ GitHub Actions automation works. Contributors should read
 
 ## 1. Repo & version model
 
-**Branches** (8 version branches; `26.2` is the default and the only one you develop on):
+**Branches** (9 version branches; `26.2` is the default and the only one you develop on):
 
-- `26.2` — Mojang-mapped (mojmap), the **base/source branch** for all syncs and the
-  current game version.
+- `26.2` — Mojang-mapped (mojmap), the **base/source branch** for all syncs.
 - `26.1.2` — mojmap port (kept in sync via `sync-base`).
+- `26.3` — current game version, mojmap port (kept in sync via `sync-base`).
 - `1.21.1`, `1.21.4`, `1.21.5`, `1.21.8`, `1.21.10`, `1.21.11` — yarn-mapped ports.
 - `sync/base-26.2-to-<target>` — short-lived sync branches created by the pipeline (you
   review/merge them as PRs; never commit to them directly).
 
 **Version scheme** — `mod_version` in `gradle.properties` is `0.16.8-<branch>` per branch
-(jar: `jefff-mod-0.16.8-26.2.jar`). `gradle.properties` is **not** part of the sync
+(jar: `jefff-mod-0.16.8-26.3.jar`). `gradle.properties` is **not** part of the sync
 manifest — version bumps are manual, per branch.
 
 **TL;DR of the three things you can do** (details below):
@@ -36,10 +36,10 @@ manifest — version bumps are manual, per branch.
 
 | Workflow | File | Triggers | What it does |
 |---|---|---|---|
-| **Build Pull Request** | `.github/workflows/pull_request.yml` | `pull_request` | Builds every PR with JDK 21 and uploads `build/libs` as an artifact (the merge gate). |
-| **Publish Pre-Release** | `.github/workflows/publish.yml` | `push` to the 8 version branches + `workflow_dispatch` | Builds the pushed branch and updates the **single** pre-release channel `v<next>-pre` (currently `v0.16.9-pre`). Never marks `Latest`. |
+| **Build Pull Request** | `.github/workflows/pull_request.yml` | `pull_request` | Builds PRs with JDK 25 for 26.x or JDK 21 for 1.21.x and uploads `build/libs` as an artifact (the merge gate). |
+| **Publish Pre-Release** | `.github/workflows/publish.yml` | `push` to the 9 version branches + `workflow_dispatch` | Builds the pushed branch and updates the **single** pre-release channel `v<next>-pre` (currently `v0.16.9-pre`). Never marks `Latest`. |
 | **Publish Release** | `.github/workflows/release.yml` | `workflow_dispatch` | Builds the chosen branch and creates the **stable** release `v<mod_version>` (prerelease-label off, marked `Latest`). |
-| **sync-base** | `.github/workflows/sync-base.yml` | `workflow_dispatch` | Ports the entire `src/main/java` tree from `26.2` to the requested target branch(es) and delivers PRs. |
+| **sync-base** | `.github/workflows/sync-base.yml` | `push` on base code/tooling + `workflow_dispatch` | Automatically ports `26.2` to `26.3`; manual runs select any supported target(s). Builds and delivers reviewable PRs. |
 
 ---
 
@@ -71,14 +71,14 @@ Manual stable-cut. Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
-| `branch` | `26.2` | Version branch to release. |
+| `branch` | `26.2` | Version branch to release (select `26.3` for `v0.16.8-26.3`). |
 | `version` | *(empty)* | Optional `mod_version` override (e.g. `0.16.9-26.2`). Applied only in the runner's `gradle.properties` — **nothing is committed**. |
 
 It builds, then publishes tag **`v<mod_version>`** (or `v<version>` when overridden),
 title `jefff-mod <version>`, not a pre-release, marked **Latest**. Idempotent: re-running
 with an existing tag is a no-op.
 
-> Stable and pre-release never collide: stable = `v0.16.8-26.2`, pre-release channel =
+> Stable and pre-release never collide: stable = `v0.16.8-26.3`, pre-release channel =
 > `v0.16.9-pre`. Releasing does not touch the channel and vice-versa.
 
 ### 2.3 sync-base (`sync-base.yml`)
@@ -138,7 +138,7 @@ Actions → **sync-base** → Run workflow. Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | `1.21.1,1.21.4,1.21.5,1.21.8,1.21.10,1.21.11,26.1.2` | Target branch(es), comma-separated, no spaces. |
+| `version` | `1.21.1,1.21.4,1.21.5,1.21.8,1.21.10,1.21.11,26.1.2,26.3` | Target branch(es), comma-separated, no spaces. |
 | `source_branch` | `26.2` | Base source branch (the `src/main/java` tree is ported from here). |
 | `source_ref` | *(empty)* | Pin source to an exact commit; empty = live `origin/<source_branch>` HEAD. |
 | `delivery` | `pr` | `dry` (local commit, no push) · `push` (push sync branch) · `pr` (push + open/refresh PR). |
@@ -170,7 +170,7 @@ pin — plus `fixups.py`, `apply_manifest.py`):
 2. Copy the **whole `src/main/java` tree** (mojmap) from the source; temporarily point the
    target's mappings at official Mojang mappings for the *same* MC version and run:
    `./gradlew migrateMappings` with the target's yarn pin; restore `build.gradle`.
-   Mojmap targets (26.1.2) copy the tree verbatim — no migration.
+   Mojmap targets (26.1.2, 26.3) copy the tree with version-specific fixups — no mapping migration.
 3. `fixups.py` — small mechanical residual fixes loom leaves behind for that toolchain
    generation (`--verify` fails if any raw mojmap token survives).
 4. `apply_manifest.py` — idempotent metadata: mixins are **auto-discovered** from the
@@ -214,6 +214,23 @@ tooling scripts are pulled from the default branch via `git archive origin/26.2
 ---
 
 ## 6. Local dev environment notes
+
+### Automatic 26.3 compatibility
+
+`26.2` remains the default/source branch. Pushes changing `src/main/java/**`,
+`.github/scripts/**`, or `sync-base.yml` automatically sync **only `26.3`**.
+Manual dispatch still defaults to all eight target branches. The sync job tests
+the compatibility rules, applies `MOJMAP_RULES["26.3"]`, builds with JDK 25,
+and opens/refreshes `sync/base-26.2-to-26.3` for review (no automatic merge).
+The rules translate the old single-argument hand swing to the held item's
+interaction animation and `false`, matching vanilla 26.3's predicted item-use swing.
+Unrecognized future API changes still fail the build gate rather than being guessed.
+
+Regression tests: `python3 -m unittest discover -s .github/scripts -p 'test_*.py'`.
+Release the new port via **Publish Release**, `branch=26.3`, using its committed
+`mod_version=0.16.8-26.3` (tag `v0.16.8-26.3`). The pre-release channel stays `v0.16.9-pre`.
+
+### Environment
 
 - **JDKs:** 1.21.x branches build with JDK 21, 26.x with JDK 25 — keep both installed
   (matching what CI pins).

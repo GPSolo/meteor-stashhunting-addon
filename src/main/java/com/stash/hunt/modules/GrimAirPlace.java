@@ -106,7 +106,7 @@ public class GrimAirPlace extends Module {
 
             mc.player.connection.send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, new BlockPos(0,0,0), Direction.DOWN));
 
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getItemInHand(InteractionHand.MAIN_HAND).getInteractAnimation(), false);
             delay = 0;
         }
     }

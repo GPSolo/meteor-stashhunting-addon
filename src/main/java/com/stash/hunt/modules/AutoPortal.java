@@ -187,7 +187,7 @@ public class AutoPortal extends Module {
                 if (!waitingForBreak.contains(pos) && mc.level.getBlockState(pos).getBlock().asItem() != Items.OBSIDIAN) {
                     if (mc.gameMode != null) {
                         mc.gameMode.startDestroyBlock(pos, Direction.UP);
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getItemInHand(InteractionHand.MAIN_HAND).getInteractAnimation(), false);
                         waitingForBreak.add(pos);
                     }
                 }
@@ -205,7 +205,7 @@ public class AutoPortal extends Module {
                 InteractionHand.OFF_HAND, bhr, mc.player.containerMenu.getStateId() + 2));
             mc.player.connection.send(new ServerboundPlayerActionPacket(
                 ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getItemInHand(InteractionHand.MAIN_HAND).getInteractAnimation(), false);
         }
         delay = 0;
 
@@ -219,7 +219,7 @@ public class AutoPortal extends Module {
                     BlockHitResult fireHit = new BlockHitResult(Vec3.atCenterOf(firePos), Direction.UP, firePos, false);
 
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, fireHit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getItemInHand(InteractionHand.MAIN_HAND).getInteractAnimation(), false);
                     break;
                 }
             }

@@ -6,9 +6,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v3
+      - uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: ${{ startsWith(github.base_ref, '26.') && '25' || '21' }}
           distribution: 'temurin'
       - name: Build
         run: ./gradlew build

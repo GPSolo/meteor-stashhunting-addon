@@ -49,11 +49,11 @@ public class Utils
 
         if (itemResult.isOffhand()) {
             mc.gameMode.useItem(mc.player, InteractionHand.OFF_HAND);
-            mc.player.swing(InteractionHand.OFF_HAND);
+            mc.player.swing(InteractionHand.OFF_HAND, mc.player.getItemInHand(InteractionHand.OFF_HAND).getInteractAnimation(), false);
         } else {
             InvUtils.swap(itemResult.slot(), true);
             mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getItemInHand(InteractionHand.MAIN_HAND).getInteractAnimation(), false);
             InvUtils.swapBack();
         }
         if (elytraSwapSlot != -1)

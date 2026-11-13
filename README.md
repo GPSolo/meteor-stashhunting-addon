@@ -1,4 +1,4 @@
-# jeff mod (For minecraft 1.21.1, 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2, 26.2)
+# jeff mod (For minecraft 1.21.1, 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2, 26.2, 26.3)
 #### Make an issue or DM me on discord `0x658` with any questions (Check the FAQ first)
 #### Pull Requests are welcome, please make them to the 26.2 branch.
 #### Check the [Wiki](https://github.com/miles352/meteor-stashhunting-addon/wiki) for a full list of features and options.
@@ -70,7 +70,7 @@ How it works:
   branch's own pinned loom, residual mechanical fixups are applied (`.github/scripts/fixups.py`),
   and mixin registration in `mixins.json` is auto-applied idempotently (`.github/scripts/apply_manifest.py`).
   The target's `src/main/java` is then **replaced** by the migrated tree (mirror semantics).
-- Mojmap target (26.1.2): the tree is copied verbatim; `apply_manifest` also adds the
+- Mojmap targets (26.1.2, 26.3): the tree is copied with version-specific fixups; `apply_manifest` also adds the
   `compileOnly fabric-resource-loader-v1` line mirroring 26.2's build.gradle (the 26.x
   merged game jar declares `MinecraftServer implements DataResourceStore`).
 - `src/main/resources` (mixins.json, fabric.mod.json) is never overwritten — mixins are
@@ -85,6 +85,9 @@ How it works:
   source commits being ported (delta since the `base-source.txt` "Last synced from" pin).
 
 Dispatch inputs (`workflow_dispatch` on the default branch):
+- Pushes to `26.2` touching Java code or sync tooling automatically build and open/refresh
+  a sync PR for `26.3`. Its swing API compatibility fix is reapplied on every sync;
+  `26.2` stays the base. PRs still require review/merge. Other ports remain manual.
 - `version` — target branch(es), comma-separated, e.g. `1.21.1,1.21.8,26.1.2`.
 - `source_branch` — base source (default `26.2`).
 - `source_ref` — pin an exact source commit (empty = live `origin/<source_branch>` HEAD).
